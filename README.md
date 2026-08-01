@@ -41,9 +41,6 @@ So the Republic, and then the Empire, refused to leave it to the market. The
 was to decide **where the grain came from, which route it took, which granary
 held it, and who received it** — and to keep the record of all four.
 
-It was not built out of paranoia. It was built out of arithmetic: **a republic
-cannot outsource what it cannot live without.**
-
 Your organisation is now in that position with compute. Every agent you deploy
 sends your material somewhere, and "somewhere" is currently decided by whichever
 provider a developer typed into a config file eighteen months ago.
