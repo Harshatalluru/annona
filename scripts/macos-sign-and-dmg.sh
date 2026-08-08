@@ -63,6 +63,26 @@ if [ "$IDENTITY" = "-" ]; then
   echo "→ signing $APP ad-hoc (no Developer ID in this build)"
   codesign --force --sign - "$APP"
 else
+  # The sidecar first, and separately. `codesign` on a bundle signs the bundle's
+  # main executable and *seals* everything else as a resource — it does not sign
+  # the second executable in Contents/MacOS. Notarisation looks at every binary
+  # it finds, so the first submission came back Invalid with three complaints
+  # about `Contents/MacOS/annona` alone: no Developer ID, no secure timestamp,
+  # no hardened runtime.
+  #
+  # This is the same binary `--deep` would sign, and `--deep` is still wrong:
+  # it re-signs the Python.framework PyInstaller packed, which then no longer
+  # matches what the running process expects. Signing the sidecar on its own,
+  # with the entitlement that lets it load another team's libraries, satisfies
+  # the notary and leaves the framework alone. See scripts/sidecar.entitlements.
+  SIDECAR="${APP}/Contents/MacOS/annona"
+  if [ -f "$SIDECAR" ]; then
+    echo "→ signing the sidecar $SIDECAR"
+    codesign --force --options runtime --timestamp \
+             --entitlements scripts/sidecar.entitlements \
+             --sign "$IDENTITY" "$SIDECAR"
+  fi
+
   # --options runtime is what notarisation requires; Apple rejects a submission
   # without the hardened runtime, and the rejection arrives minutes later from
   # a service rather than from the build.
@@ -90,43 +110,76 @@ codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Signature|Sealed Resources|Info.
 # APPLE_API_KEY_P8 holds the key's contents, because a GitHub secret is a
 # string and writing it to a file is this script's job rather than the
 # workflow's — a .p8 left in the workspace is a credential in an artefact.
-notarise() {
-  local artefact="$1"
-  if [ "$IDENTITY" = "-" ]; then
-    return 0
-  fi
+_notary_submit() {
+  local file="$1"
+  local keyfile="" rc=0
 
-  local keyfile=""
   if [ -n "${APPLE_API_KEY_P8:-}" ]; then
     keyfile="$(mktemp -t ascapi).p8"
     printf '%s' "$APPLE_API_KEY_P8" > "$keyfile"
-    # Removed however this function exits, including on a failed submission.
-    trap 'rm -f "$keyfile"' RETURN
   elif [ -z "${APPLE_ID:-}" ]; then
     echo "::warning::signed but not notarised — no App Store Connect key and no Apple ID"
-    return 0
+    return 1
   fi
 
-  echo "→ notarising $artefact (this waits for Apple, typically 1-5 minutes)"
+  # Cleaned up on both paths rather than by `trap ... RETURN`: that trap is not
+  # scoped to the function that sets it, so it fired again when the *caller*
+  # returned, by which time `keyfile` was out of scope and `set -u` killed the
+  # script one line after a successful notarisation.
+  echo "→ notarising $file (this waits for Apple, typically 1-5 minutes)"
   if [ -n "$keyfile" ]; then
-    xcrun notarytool submit "$artefact" --wait \
+    xcrun notarytool submit "$file" --wait \
       --key "$keyfile" \
       --key-id "${APPLE_API_KEY_ID}" \
-      --issuer "${APPLE_API_ISSUER}"
+      --issuer "${APPLE_API_ISSUER}" || rc=$?
+    rm -f "$keyfile"
   else
-    xcrun notarytool submit "$artefact" --wait \
+    xcrun notarytool submit "$file" --wait \
       --apple-id "${APPLE_ID}" \
       --password "${APPLE_PASSWORD}" \
-      --team-id "${APPLE_TEAM_ID}"
+      --team-id "${APPLE_TEAM_ID}" || rc=$?
   fi
-
-  # Stapling puts the ticket inside the file, so the first launch works on a
-  # machine that is offline or behind a firewall that eats Apple's OCSP.
-  xcrun stapler staple "$artefact"
-  xcrun stapler validate "$artefact"
+  return "$rc"
 }
 
-notarise "$APP"
+# Notarise an .app bundle.
+#
+# `notarytool submit` refuses a bundle: it takes a .zip, a .pkg or a .dmg, and
+# says so rather than guessing. So the app is zipped for the submission — with
+# `ditto --keepParent`, or the archive holds the bundle's *contents* and Apple
+# rejects it for a second, less obvious reason — and the ticket is then stapled
+# to the .app itself, which `stapler` does accept.
+#
+# This happens before the tarball is repacked and before the dmg is built, so
+# both carry an app that already has its ticket. An update that installed an
+# unstapled app would be checked against Apple over the network on first launch,
+# and refused on a machine that cannot reach them.
+notarise_app() {
+  local app="$1"
+  [ "$IDENTITY" = "-" ] && return 0
+
+  local staging
+  staging="$(mktemp -d)"
+  ditto -c -k --keepParent "$app" "$staging/app.zip"
+  _notary_submit "$staging/app.zip" || { rm -rf "$staging"; return 0; }
+  rm -rf "$staging"
+
+  xcrun stapler staple "$app"
+  xcrun stapler validate "$app"
+}
+
+# Notarise a file notarytool already accepts — the dmg.
+notarise_file() {
+  local file="$1"
+  [ "$IDENTITY" = "-" ] && return 0
+  _notary_submit "$file" || return 0
+  # Stapling puts the ticket inside the file, so the first launch works on a
+  # machine that is offline or behind a firewall that eats Apple's OCSP.
+  xcrun stapler staple "$file"
+  xcrun stapler validate "$file"
+}
+
+notarise_app "$APP"
 
 # ── The updater archive, repacked from what was actually signed ───────────────
 TARBALL="${BUNDLE_DIR}/macos/Annona.app.tar.gz"
@@ -215,6 +268,6 @@ rm -rf "$STAGE_ROOT"
 # whether the first launch works. Notarising the app inside it is not enough on
 # its own: an unstapled disk image makes Gatekeeper ask Apple over the network,
 # and the answer on a machine that cannot reach Apple is no.
-notarise "$DMG"
+notarise_file "$DMG"
 
 echo "→ done: $DMG ($(du -h "$DMG" | cut -f1))"

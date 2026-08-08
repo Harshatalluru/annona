@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the PyInstaller sidecar, and only for it.
+
+  The hardened runtime requires every library a process loads to be signed by
+  the same team. A PyInstaller onefile binary unpacks its own Python.framework
+  into a temporary directory at launch and loads it from there — signed by
+  PyInstaller's build, not by us — so the loader refuses it and the daemon dies
+  before it opens a socket. That is the failure documented in
+  scripts/macos-sign-and-dmg.sh as "different Team IDs".
+
+  `disable-library-validation` is the entitlement Apple provides for exactly
+  this case. It is narrow: it lets this one binary load libraries from another
+  team, and grants nothing else. It does not disable the hardened runtime, does
+  not allow unsigned executable memory, and does not apply to the app bundle —
+  which is signed without it.
+
+  Nothing else is listed on purpose. `allow-unsigned-executable-memory` and
+  `allow-dyld-environment-variables` are the two usually pasted in alongside
+  this one; both weaken the runtime further and neither was needed here, which
+  was established by trying without them rather than by assuming.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
