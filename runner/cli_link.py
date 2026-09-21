@@ -26,8 +26,10 @@ from runner.link import (
     enroll,
     inbox_dir,
     link_path,
+    release_ceiling,
 )
 from runner.policy.loader import load_policy
+from runner.policy.models import Policy
 from runner.service_urls import resolve_service_url
 from runner.services.enforcement import policy_path
 
@@ -52,12 +54,14 @@ link:
 """
 
 
-def _ensure_link_section(release: str) -> str:
-    """Add ``link.release`` to the policy if it has none. Returns what is in force."""
+def _ensure_link_section(release: str) -> Policy:
+    """Add ``link.release`` to the policy if it has no link section. Returns what is in force."""
     path = policy_path()
     policy = load_policy(path)  # refuses to enroll a runner with no valid perimeter
-    if policy.link.release is not None:
-        return policy.link.release.label
+    # An endpoints-only section is a decision too — nothing to any Studio it
+    # does not name — and appending a second `link:` would silently replace it.
+    if policy.link.release is not None or policy.link.endpoints:
+        return policy
     # Validated before anything is written: a bad --release must not leave the
     # perimeter's own file unparseable.
     label = SensitivityClass.parse(release).label
@@ -66,11 +70,11 @@ def _ensure_link_section(release: str) -> str:
     path.write_text(
         original.rstrip() + "\n" + _LINK_SECTION.format(release=label), encoding="utf-8"
     )
-    written = load_policy(path).link.release
-    if written is None:  # e.g. an existing `link:` without `release` shadowed by YAML
+    written = load_policy(path)
+    if written.link.release is None:  # e.g. an existing `link:` without `release` shadowed by YAML
         path.write_text(original, encoding="utf-8")
         raise LinkError("could not add link.release to the policy; set it by hand")
-    return written.label
+    return written
 
 
 @link_app.command("enroll")
@@ -88,9 +92,10 @@ def enroll_cmd(
 ):
     """Trade an enrollment code for this runner's own credential."""
     try:
-        in_force = _ensure_link_section(release)
+        policy = _ensure_link_section(release)
         config = enroll(endpoint or resolve_service_url("ai"), code, name, version=__version__)
         where = config.save()
+        ceiling, rule = release_ceiling(policy, config.endpoint)
     except (LinkError, Exception) as exc:  # noqa: BLE001 — every failure is a sentence
         console.print(f"❌ [red]{exc}[/red]")
         raise typer.Exit(1) from None
@@ -99,7 +104,8 @@ def enroll_cmd(
     )
     console.print(f"   credential  {where} (0600)")
     console.print(
-        f"   link.release  [bold]{in_force}[/bold] — answers above it stay on this machine"
+        f"   {rule}  [bold]{ceiling.label if ceiling else 'none — metadata only'}[/bold]"
+        " — answers above it stay on this machine"
     )
     console.print("   next: [cyan]annona link serve[/cyan]  (outbound HTTPS only; nothing listens)")
 
@@ -118,16 +124,14 @@ def status_cmd():
         )
         return
     try:
-        release = load_policy(policy_path()).link.release
+        ceiling, rule = release_ceiling(load_policy(policy_path()), config.endpoint)
     except Exception as exc:  # noqa: BLE001
         console.print(f"enrolled as {config.name}, but the policy does not load: {exc}")
         raise typer.Exit(1) from None
     console.print(
         f"enrolled as [bold]{config.name}[/bold] ({config.runner_id}) → {config.endpoint}"
     )
-    console.print(
-        f"link.release: [bold]{release.label if release else 'none — metadata only'}[/bold]"
-    )
+    console.print(f"{rule}: [bold]{ceiling.label if ceiling else 'none — metadata only'}[/bold]")
 
 
 @link_app.command("serve")

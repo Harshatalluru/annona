@@ -163,6 +163,28 @@ def test_policy_without_classes_is_refused():
         parse(classes={})
 
 
+def test_a_link_endpoint_over_plain_http_is_refused():
+    link = {"endpoints": [{"url": "http://studio.intranet.example", "release": "restricted"}]}
+    with pytest.raises(PolicyError, match=r"link\.endpoints\[0\].*https"):
+        parse(link=link)
+
+
+def test_a_link_endpoint_listed_twice_is_refused():
+    link = {
+        "endpoints": [
+            {"url": "https://Studio.Intranet.example/", "release": "restricted"},
+            {"url": "https://studio.intranet.example", "release": "public"},
+        ]
+    }
+    with pytest.raises(PolicyError, match="already listed"):
+        parse(link=link)
+
+
+def test_a_link_endpoint_without_a_release_is_refused():
+    with pytest.raises(PolicyError, match="unknown sensitivity class"):
+        parse(link={"endpoints": [{"url": "https://studio.intranet.example"}]})
+
+
 def test_unknown_on_unavailable_is_refused():
     with pytest.raises(PolicyError, match="on_unavailable must be"):
         parse(rules=[{"match": {"class": "public"}, "allow": ["local"], "on_unavailable": "retry"}])

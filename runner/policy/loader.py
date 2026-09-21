@@ -30,6 +30,7 @@ from runner.policy.models import (
     SkillPolicy,
     Substrate,
     ToolPolicy,
+    normalise_endpoint,
 )
 from runner.policy.redaction import RedactionPolicy
 
@@ -240,13 +241,28 @@ def _parse_skills(raw: Any) -> SkillPolicy:
 
 
 def _parse_link(raw: Mapping[str, Any]) -> LinkPolicy:
-    """Parse the ``link:`` section — the ceiling on what goes back to Studio."""
-    if not raw or raw.get("release") is None:
-        return LinkPolicy()
+    """Parse the ``link:`` section — the ceiling on what goes back to Studio.
+
+    ``endpoints`` names control planes by exact URL. There is no wildcard: a
+    pattern is a promise about machines nobody has looked at yet (ADR 0007).
+    """
     try:
-        return LinkPolicy(release=SensitivityClass.parse(raw["release"]))
+        release = None if raw.get("release") is None else SensitivityClass.parse(raw["release"])
     except ValueError as exc:
         raise PolicyError(f"link.release: {exc}") from exc
+
+    endpoints: dict[str, SensitivityClass] = {}
+    for index, entry in enumerate(_require_sequence(raw.get("endpoints"), "link.endpoints")):
+        body = _require_mapping(entry, f"link.endpoints[{index}]")
+        try:
+            url = normalise_endpoint(str(body.get("url", "")))
+            ceiling = SensitivityClass.parse(body.get("release"))
+        except ValueError as exc:
+            raise PolicyError(f"link.endpoints[{index}]: {exc}") from exc
+        if url in endpoints:
+            raise PolicyError(f"link.endpoints[{index}]: {url} is already listed")
+        endpoints[url] = ceiling
+    return LinkPolicy(release=release, endpoints=endpoints)
 
 
 def _parse_redaction(raw: Mapping[str, Any]) -> RedactionPolicy:

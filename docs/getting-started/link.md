@@ -27,6 +27,26 @@ A run that reads anything above it — or sealed material, or whose answer itsel
 classifies above it — is reported **withheld**: Studio sees that it finished and
 where it ran; the answer stays here.
 
+### Studio inside your network
+
+A Studio your company runs behind its own firewall can be allowed more than the
+public one — but only that Studio. Name it:
+
+```yaml
+link:
+  release: internal            # any Studio
+  endpoints:
+    - url: https://studio.intranet.example.com
+      release: restricted      # this one only
+```
+
+The URL must match the endpoint this machine enrolled to (host case and a
+trailing slash aside); any other Studio — the same laptop re-enrolled at home,
+say — gets `release`. `annona link status` prints the ceiling in force and which
+rule set it. Sealed material stays here whatever the endpoint. Issue the internal
+Studio's certificate from your own CA: the name in the policy is only as good as
+the certificate that proves it. Why no wildcards: [ADR 0007](../adr/0007-release-bound-to-endpoint.md).
+
 ### Where a withheld answer goes
 
 Into the inbox on this machine, `$ANNONA_HOME/link/inbox/` (mode `0600`):

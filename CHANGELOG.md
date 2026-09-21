@@ -6,6 +6,23 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### A higher ceiling for the Studio in the building
+
+`link.endpoints` binds a release ceiling to one named Studio (ADR 0007): a
+Studio inside the company network can receive `restricted` answers while every
+other endpoint — including the same machine re-enrolled to the public Studio —
+still gets `link.release`. Matching is exact (host case and a trailing slash
+aside), https only, no wildcards; sealed material still never leaves. The
+`release` reason and `annona link status` name the ceiling that applied.
+
+```yaml
+link:
+  release: internal
+  endpoints:
+    - url: https://studio.intranet.example.com
+      release: restricted
+```
+
 ## [0.1.3] — 2026-09-21
 
 ### A machine you own, driven from Agents Studio

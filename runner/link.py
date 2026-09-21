@@ -16,10 +16,12 @@ to this runner, and report on a job it holds. Nothing else.
 **What goes back is a policy decision.** Studio is a destination outside the
 machine, so a job's answer is egress. It is released only when the run's working
 set, its seal and the answer's own text all sit at or below ``link.release`` in
-the policy. Otherwise the job is reported ``withheld``: Studio learns the job
-finished and where it was placed, and the answer stays here — in the inbox,
-``$ANNONA_HOME/link/inbox``, readable with ``annona link show``. A policy with no
-``link:`` section releases nothing but that metadata.
+the policy — or at or below the ``link.endpoints`` entry for the endpoint this
+machine enrolled to, when there is one (ADR 0007). Otherwise the job is reported
+``withheld``: Studio learns the job finished and where it was placed, and the
+answer stays here — in the inbox, ``$ANNONA_HOME/link/inbox``, readable with
+``annona link show``. A policy with no ``link:`` section releases nothing but
+that metadata.
 
 **Studio names a skill, never writes one.** The heartbeat lists the skills this
 policy enables; a job may name one, and it is loaded before the first turn
@@ -40,7 +42,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -49,7 +50,7 @@ from runner.audit.ledger import Ledger, read_entries
 from runner.kernel.types import SensitivityClass
 from runner.policy.classifier import PolicyClassifier
 from runner.policy.loader import load_policy
-from runner.policy.models import Policy
+from runner.policy.models import Policy, normalise_endpoint
 from runner.services.enforcement import policy_path
 from runner.skills.loader import discover_skills
 from runner.skills.registry import SkillRegistry
@@ -65,6 +66,7 @@ __all__ = [
     "enroll",
     "inbox_dir",
     "link_path",
+    "release_ceiling",
     "release_decision",
 ]
 
@@ -72,7 +74,6 @@ API_PREFIX = "/api/v1/runner/link"
 POLL_SECONDS = 3.0
 HEARTBEAT_SECONDS = 15.0
 MAX_INSTRUCTION_CHARS = 20_000
-_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
 class LinkError(RuntimeError):
@@ -106,12 +107,11 @@ def check_endpoint(url: str) -> str:
     A runner secret sent over plain HTTP is a secret handed to every network
     between here and Studio, and the material behind it with it.
     """
-    parsed = urlparse(url.strip())
-    if parsed.scheme == "https" and parsed.hostname:
-        return url.strip().rstrip("/")
-    if parsed.scheme == "http" and parsed.hostname in _LOOPBACK:
-        return url.strip().rstrip("/")
-    raise LinkError(f"refusing {url!r}: the link only speaks https (http is allowed on loopback)")
+    try:
+        normalise_endpoint(url)
+    except ValueError as exc:
+        raise LinkError(str(exc)) from None
+    return url.strip().rstrip("/")
 
 
 @dataclass(frozen=True)
@@ -224,6 +224,10 @@ class LinkClient:
         self._http = client or httpx.Client(timeout=60)
         self._headers = {"Authorization": f"Runner {config.runner_id}.{config.secret}"}
 
+    @property
+    def endpoint(self) -> str:
+        return self._config.endpoint
+
     def _post(self, path: str, body: Mapping[str, Any] | None = None) -> Any:
         response = self._http.post(
             f"{self._config.endpoint}{API_PREFIX}{path}",
@@ -246,36 +250,50 @@ class LinkClient:
 # ── The decision ─────────────────────────────────────────────────────────────
 
 
+def release_ceiling(policy: Policy, endpoint: str) -> tuple[SensitivityClass | None, str]:
+    """The ceiling for answers going to ``endpoint``, and the name of the rule that set it.
+
+    A ``link.endpoints`` entry for exactly this URL wins; anything else gets
+    ``link.release``. The endpoint is the one this machine enrolled to, read
+    here — so a policy written for the Studio in the building still releases
+    only ``link.release`` to any other Studio it is enrolled to later.
+    """
+    url = normalise_endpoint(endpoint)
+    if url in policy.link.endpoints:
+        return policy.link.endpoints[url], f"link.release for {url}"
+    return policy.link.release, "link.release"
+
+
 def release_decision(
     policy: Policy,
     *,
+    endpoint: str,
     run_class: SensitivityClass,
     sealed: str,
     response: str,
 ) -> tuple[bool, str]:
-    """Whether a job's answer may go back to the control plane, and why.
+    """Whether a job's answer may go back to ``endpoint``, and why.
 
     All three must hold: the run's working set, its seal, and the answer's own
     text. The last one is not redundant — a model can quote a fiscal code it was
     told in the instruction without ever reading a file.
     """
-    ceiling = policy.link.release
+    ceiling, rule = release_ceiling(policy, endpoint)
     if ceiling is None:
-        return False, "the policy has no link.release; only metadata leaves this machine"
+        return False, f"the policy has no {rule}; only metadata leaves this machine"
     if sealed:
         return False, f"the run touched sealed material ({sealed}); sealed material never leaves"
     if run_class > ceiling:
         return False, (
-            f"the run read {run_class.label} material; "
-            f"link.release permits up to {ceiling.label}"
+            f"the run read {run_class.label} material; {rule} permits up to {ceiling.label}"
         )
     answer_class = PolicyClassifier(policy).classify_text(response)
     if answer_class > ceiling:
         return False, (
             f"the answer itself classifies as {answer_class.label}; "
-            f"link.release permits up to {ceiling.label}"
+            f"{rule} permits up to {ceiling.label}"
         )
-    return True, f"within link.release ({ceiling.label})"
+    return True, f"within {rule} ({ceiling.label})"
 
 
 # ── The worker ───────────────────────────────────────────────────────────────
@@ -495,7 +513,11 @@ class LinkWorker:
         response = str(result.get("response", ""))
         cancelled = job_id in self._cancelled
         released, why = release_decision(
-            policy, run_class=run_class, sealed=str(result.get("sealed", "")), response=response
+            policy,
+            endpoint=self._client.endpoint,
+            run_class=run_class,
+            sealed=str(result.get("sealed", "")),
+            response=response,
         )
 
         safe_placement = {k: placement.get(k, "") for k in ("class", "outcome", "substrate")}

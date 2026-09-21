@@ -33,6 +33,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from runner.kernel.types import SensitivityClass
 from runner.policy.redaction import RedactionPolicy
@@ -49,6 +50,7 @@ __all__ = [
     "ToolPolicy",
     "Unavailable",
     "glob_matches",
+    "normalise_endpoint",
     "normalise_path",
 ]
 
@@ -338,6 +340,40 @@ class LinkPolicy:
     """
 
     release: SensitivityClass | None = None
+    endpoints: Mapping[str, SensitivityClass] = field(default_factory=dict)
+    """A ceiling per named control plane, keyed by :func:`normalise_endpoint`.
+
+    It replaces ``release`` for that endpoint only, so a Studio inside the
+    company network can receive what the public one cannot. See ADR 0007.
+    """
+
+
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def normalise_endpoint(url: str) -> str:
+    """The form in which two control-plane URLs are the same one.
+
+    Scheme, host, port and path; the host lower-cased, a trailing slash dropped,
+    credentials, query and fragment ignored. Nothing else is equated — not
+    ``:443`` with no port, not ``www.`` with none — because a near miss here
+    falls back to ``link.release``, which is the safe direction to be wrong in.
+
+    Raises :class:`ValueError` unless the scheme is https (http on loopback,
+    for development): a ceiling bound to a plain-HTTP endpoint is bound to
+    whoever answers on the network path.
+    """
+    parsed = urlparse(url.strip())
+    host = parsed.hostname or ""
+    secure = parsed.scheme == "https" or (parsed.scheme == "http" and host in _LOOPBACK)
+    if not (host and secure):
+        raise ValueError(
+            f"refusing {url!r}: the link only speaks https (http is allowed on loopback)"
+        )
+    netloc = f"[{host}]" if ":" in host else host
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    return f"{parsed.scheme}://{netloc}{parsed.path.rstrip('/')}"
 
 
 @dataclass(frozen=True, slots=True)

@@ -27,12 +27,14 @@ from runner.link import (
     LinkWorker,
     check_endpoint,
     enroll,
+    release_ceiling,
     release_decision,
 )
 from runner.policy.loader import default_policy_document, parse_policy
 
 FISCAL_CODE = "RSSMRA85T10A562S"
 ENDPOINT = "https://studio.test"
+ON_PREM = "https://studio.intranet.example"
 JOB = {
     "id": "job-1",
     "lease_id": "lease-1",
@@ -46,10 +48,15 @@ JOB = {
 }
 
 
-def policy_doc(release: str | None = "internal") -> dict:
+def policy_doc(release: str | None = "internal", **endpoints: str) -> dict:
+    """``endpoints`` maps a url to its ceiling, e.g. ``policy_doc(**{ON_PREM: "restricted"})``."""
     doc = json.loads(json.dumps(default_policy_document()))
     if release is not None:
         doc["link"] = {"release": release}
+    if endpoints:
+        doc.setdefault("link", {})["endpoints"] = [
+            {"url": url, "release": ceiling} for url, ceiling in endpoints.items()
+        ]
     return doc
 
 
@@ -60,8 +67,8 @@ def policy_file(tmp_path: Path) -> Path:
     return path
 
 
-def config() -> LinkConfig:
-    return LinkConfig(endpoint=ENDPOINT, runner_id="r-1", secret="s3cret", name="dgx1")
+def config(endpoint: str = ENDPOINT) -> LinkConfig:
+    return LinkConfig(endpoint=endpoint, runner_id="r-1", secret="s3cret", name="dgx1")
 
 
 def enforced(response: str, klass: str = "internal", sealed: str = ""):
@@ -82,9 +89,9 @@ def enforced(response: str, klass: str = "internal", sealed: str = ""):
     return run
 
 
-def worker(policy_file: Path, run, handler=None) -> LinkWorker:
+def worker(policy_file: Path, run, handler=None, endpoint: str = ENDPOINT) -> LinkWorker:
     transport = httpx.MockTransport(handler or (lambda r: httpx.Response(200, json={})))
-    client = LinkClient(config(), client=httpx.Client(transport=transport))
+    client = LinkClient(config(endpoint), client=httpx.Client(transport=transport))
     return LinkWorker(
         client, run, policy_file=policy_file, poll_seconds=0.01, heartbeat_seconds=0.01
     )
@@ -192,9 +199,71 @@ def test_a_401_means_revoked():
 )
 def test_release_decision(release, run_class, sealed, response, released):
     policy = parse_policy(policy_doc(release))
-    ok, why = release_decision(policy, run_class=run_class, sealed=sealed, response=response)
+    ok, why = release_decision(
+        policy, endpoint=ENDPOINT, run_class=run_class, sealed=sealed, response=response
+    )
     assert ok is released, why
     assert why
+
+
+# ── A higher ceiling bound to one endpoint (ADR 0007) ───────────────────────
+
+
+def test_the_named_endpoint_gets_its_own_ceiling_and_every_other_gets_link_release():
+    policy = parse_policy(policy_doc("internal", **{ON_PREM: "restricted"}))
+
+    assert release_ceiling(policy, ON_PREM) == (
+        SensitivityClass.RESTRICTED,
+        f"link.release for {ON_PREM}",
+    )
+    # The same policy on a laptop re-enrolled to another Studio: the base ceiling.
+    assert release_ceiling(policy, ENDPOINT) == (SensitivityClass.INTERNAL, "link.release")
+    # A near miss is another endpoint, and falls back — the safe way to be wrong.
+    assert release_ceiling(policy, ON_PREM + ":8443")[0] is SensitivityClass.INTERNAL
+    assert release_ceiling(policy, ON_PREM + "/studio")[0] is SensitivityClass.INTERNAL
+
+
+def test_endpoints_match_across_case_and_trailing_slash():
+    policy = parse_policy(
+        policy_doc("public", **{"https://Studio.Intranet.EXAMPLE/": "restricted"})
+    )
+    assert release_ceiling(policy, ON_PREM)[0] is SensitivityClass.RESTRICTED
+    assert release_ceiling(policy, "https://STUDIO.intranet.example/")[0] is (
+        SensitivityClass.RESTRICTED
+    )
+
+
+def test_an_endpoints_only_policy_sends_nothing_to_a_studio_it_does_not_name():
+    policy = parse_policy(policy_doc(None, **{ON_PREM: "internal"}))
+    ok, why = release_decision(
+        policy, endpoint=ENDPOINT, run_class=SensitivityClass.PUBLIC, sealed="", response="ok"
+    )
+    assert not ok and "no link.release" in why
+
+
+def test_restricted_goes_to_the_studio_in_the_building_and_nowhere_else(tmp_path: Path):
+    path = tmp_path / "policy.yaml"
+    path.write_text(yaml.safe_dump(policy_doc("internal", **{ON_PREM: "restricted"})))
+
+    body = worker(path, enforced("NDA", klass="restricted"), endpoint=ON_PREM).run_job(JOB)
+    assert body["status"] == "completed"
+    assert body["release"] == f"within link.release for {ON_PREM} (restricted)"
+
+    body = worker(path, enforced("NDA", klass="restricted")).run_job({**JOB, "id": "job-2"})
+    assert body["status"] == "withheld"
+    assert "link.release permits up to internal" in body["release"]
+
+
+def test_sealed_material_never_leaves_even_for_the_studio_in_the_building():
+    policy = parse_policy(policy_doc("internal", **{ON_PREM: "restricted"}))
+    ok, why = release_decision(
+        policy,
+        endpoint=ON_PREM,
+        run_class=SensitivityClass.INTERNAL,
+        sealed="Progetto Falcon",
+        response="ok",
+    )
+    assert not ok and "sealed material never leaves" in why
 
 
 def test_a_released_answer_goes_back_with_who_asked_in_the_ledger(policy_file: Path):
@@ -378,10 +447,24 @@ def test_enroll_adds_link_release_keeping_the_operators_comments(tmp_path, monke
         _ensure_link_section("top-secret")
     assert "link:" not in path.read_text(), "a bad value must not be written"
 
-    assert _ensure_link_section("internal") == "internal"
+    assert _ensure_link_section("internal").link.release is SensitivityClass.INTERNAL
     text = path.read_text()
     assert text.startswith("# mine, keep me")
-    assert _ensure_link_section("public") == "internal", "an existing ceiling is never overwritten"
+    assert (
+        _ensure_link_section("public").link.release is SensitivityClass.INTERNAL
+    ), "an existing ceiling is never overwritten"
+
+
+def test_enroll_keeps_an_endpoints_only_link_section(tmp_path, monkeypatch):
+    from runner.cli_link import _ensure_link_section
+
+    path = tmp_path / "policy.yaml"
+    path.write_text(yaml.safe_dump(policy_doc(None, **{ON_PREM: "restricted"})), encoding="utf-8")
+    monkeypatch.setenv("ANNONA_HOME", str(tmp_path))
+
+    policy = _ensure_link_section("internal")
+    assert policy.link.release is None, "nothing to unnamed Studios was a decision"
+    assert path.read_text().count("link:") == 1
 
 
 def test_a_bad_enrollment_code_is_not_reported_as_a_revocation():

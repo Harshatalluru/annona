@@ -17,6 +17,7 @@ and the old one stays readable.
 | [0004](0004-name-the-project-dogana.md) | Name the project Dogana | Superseded by 0005 |
 | [0005](0005-name-the-project-annona.md) | Name the project Annona | Accepted |
 | [0006](0006-runner-link.md) | Link a runner to Agents Studio: outbound only, its own credential | Accepted |
+| [0007](0007-release-bound-to-endpoint.md) | Bind a higher release ceiling to the Studio it is for | Accepted |
 
 ## Writing one
 
