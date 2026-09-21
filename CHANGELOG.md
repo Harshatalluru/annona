@@ -6,6 +6,47 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-09-21
+
+### A machine you own, driven from Agents Studio
+
+`annona link` offers this machine to Agents Studio as an executor, dialling out
+only: no port opens, nothing listens, the credential is the machine's own and
+Studio can revoke it (ADR 0006). `annona link enroll <code>` once, then
+`annona link serve` — in the foreground, or under systemd on a server you are
+not sitting next to. Close the browser: the job keeps running there.
+
+What comes back is the policy's decision, not Studio's. An answer is released
+only when the run's working set, its seal and the answer's own text sit at or
+below `link.release`. Otherwise Studio sees **Kept on machine** — where the run
+was placed and why — and the answer goes to the inbox on this machine:
+
+```bash
+annona link inbox          # what stayed here, who asked, why
+annona link show 3f2a9c1e  # the instruction and the answer
+```
+
+### Skills Studio can name
+
+The heartbeat tells Studio which skills the policy enables and which tools it
+allows — never a skill's text. A job may name one; it is loaded before the first
+turn through the `skill` tool, so the pin and the ledger entry are the ones a
+model would get. A job reports a skill only when the ledger shows it loaded.
+
+### Fixed
+
+- **The shipped skills were not shipped.** They lived outside the package, so
+  `pip install annona` and the desktop app had none. They are package data now.
+- **Skills were offered when they could not load.** Without `skill` in
+  `tools.allow` the gate refuses every load; the registry now offers none and
+  `annona skills` says why.
+- **The runner reported itself as 0.1.0** to Studio whatever was installed.
+
+### Also
+
+- Google Vertex as a substrate, credentialled by the machine's ADC.
+- Stop button in the window to interrupt a run in flight.
+
 ## [0.1.1] — 2026-08-03
 
 ### Updates can actually be delivered

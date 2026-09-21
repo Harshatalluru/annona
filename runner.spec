@@ -46,6 +46,9 @@ ui_dist = os.path.abspath("ui/dist")
 if os.path.isdir(ui_dist):
     datas.append((ui_dist, "ui/dist"))
 
+# the shipped skills: loader.py looks for them next to itself
+datas.append((os.path.abspath("runner/skills/shipped"), "runner/skills/shipped"))
+
 # also ship the .env.example so first-launch can scaffold defaults
 env_example = os.path.abspath(".env.example")
 if os.path.isfile(env_example):

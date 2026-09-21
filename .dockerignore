@@ -29,5 +29,3 @@ htmlcov/
 *.dmg
 *.AppImage
 
-# Skills ship with the image.
-!skills/

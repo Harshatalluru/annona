@@ -8,7 +8,7 @@ and the instruction still works.
 
 Two directories are searched, in order, and later wins:
 
-``skills/`` in the installation
+``runner/skills/shipped/`` in the installation
     What ships with the release.
 ``$ANNONA_HOME/skills/``
     What the operator wrote. Their version of ``image-report`` overrides ours,
@@ -34,16 +34,15 @@ from runner.skills.models import Skill, SkillRequirements
 
 __all__ = ["BUNDLED_SKILLS_DIR", "discover_skills", "load_skill", "skills_dirs"]
 
-BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / "skills"
-"""Where the skills that ship with the release live: ``skills/`` in the repo."""
+BUNDLED_SKILLS_DIR = Path(__file__).resolve().parent / "shipped"
+"""Where the skills that ship with the release live: inside the package, so the
+wheel, the desktop sidecar and the container all carry them."""
 
 
 def skills_dirs(home: str | Path | None = None) -> tuple[Path, ...]:
     """Directories searched for skills, in precedence order.
 
-    ``ANNONA_SKILLS_DIR`` overrides where the shipped set lives, which is how
-    the container finds them: the image copies ``skills/`` to a fixed path
-    rather than relying on the layout of a source checkout.
+    ``ANNONA_SKILLS_DIR`` overrides where the shipped set lives.
     """
     bundled = Path(os.getenv("ANNONA_SKILLS_DIR", str(BUNDLED_SKILLS_DIR))).expanduser()
 

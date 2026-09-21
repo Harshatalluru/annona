@@ -38,7 +38,6 @@ RUN python -m venv /opt/venv \
 
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY runner ./runner
-COPY skills ./skills
 RUN /opt/venv/bin/pip install --no-cache-dir --no-deps .
 
 # ── Stage 2: the runtime ──────────────────────────────────────────────────────
@@ -70,7 +69,6 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin annona
 COPY --from=build /opt/venv /opt/venv
 # Skills ship with the image at a fixed path: a source checkout's layout is not
 # something a container should have to reproduce.
-COPY --from=build /src/skills /opt/annona/skills
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
@@ -80,7 +78,6 @@ ENV PATH="/opt/venv/bin:$PATH" \
     AKAION_BRAIN_DIR=/home/annona/vault \
     # Inside a container, loopback means "reachable by nothing". This is set by
     # the image and never by a default, so a laptop install stays on loopback.
-    ANNONA_SKILLS_DIR=/opt/annona/skills \
     ANNONA_BIND=0.0.0.0
 
 # Created here, owned here. A named volume mounted on a path that does not exist
