@@ -6,6 +6,15 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### The inbox, in the app
+
+Withheld answers can be read in the app, not only with `annona link show`: an
+**Inbox** view lists what stayed here — who asked, when, why — and opens the
+instruction and the answer. Behind it, `GET /api/link/inbox` and
+`GET /api/link/inbox/{job_id}` on the local API, which answer the window on this
+machine only: pairing lets a web app run steps here, not read what the policy
+kept from Studio.
+
 ## [0.1.3] — 2026-09-21
 
 ### A machine you own, driven from Agents Studio

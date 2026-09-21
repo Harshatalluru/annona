@@ -19,6 +19,8 @@ Endpoints:
   GET  /api/sync/status
   POST /api/sync/push
   POST /api/sync/push/{id}
+  GET  /api/link/inbox
+  GET  /api/link/inbox/{job_id}
   GET  /            → ui/dist/index.html (se la UI è stata buildata)
 """
 
@@ -29,7 +31,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
@@ -39,7 +41,8 @@ from .auth import AuthManager
 from .brain.manager import BrainManager
 from .brain.models import Note
 from .kernel_api import kernel_router
-from .pairing import LOCAL_ORIGINS, PairedOriginMiddleware
+from .link import read_inbox
+from .pairing import LOCAL_ORIGINS, PairedOriginMiddleware, is_this_machine
 from .sync.engine import SyncEngine
 
 # UI dist path: <runner-root>/ui/dist
@@ -269,6 +272,41 @@ def create_app(
             raise HTTPException(400, "Sync failed — controlla i log")
         note = brain.get(note_id)
         return NoteOut.from_note(note)
+
+    # ── Link inbox ────────────────────────────────────────────────────────────
+    # Answers this machine's policy kept from Agents Studio. Handing them to a
+    # paired web app would release them by another door, so only the window on
+    # this machine may read them — the same rule as writing the policy.
+
+    def _only_this_machine(request: Request) -> None:
+        if not is_this_machine(request):
+            raise HTTPException(403, "withheld answers can only be read on this machine")
+
+    @app.get("/api/link/inbox")
+    def link_inbox(request: Request):
+        """The withheld answers, newest first — who asked and why, not what."""
+        _only_this_machine(request)
+        return [
+            {
+                "job_id": it["job_id"],
+                "title": it.get("title", ""),
+                "requested_by": (it.get("requested_by") or {}).get("email", ""),
+                "skill": it.get("skill"),
+                "release": it.get("release", ""),
+                "placement_class": (it.get("placement") or {}).get("class", ""),
+                "received": it["received"],
+            }
+            for it in read_inbox()
+        ]
+
+    @app.get("/api/link/inbox/{job_id}")
+    def link_inbox_item(job_id: str, request: Request):
+        """One withheld answer in full. Looked up in the listing, never opened by name."""
+        _only_this_machine(request)
+        for it in read_inbox():
+            if it["job_id"] == job_id:
+                return it
+        raise HTTPException(404, "No withheld answer with that id")
 
     # ── Static UI mount ────────────────────────────────────────────────────────
     # Must be LAST: it's mounted at "/" with html=True so it would otherwise
