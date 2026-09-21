@@ -26,10 +26,12 @@ name: publish to PyPI
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
-  # Every published GitHub Release ships the matching sdist and wheel, so the
-  # desktop bundles and `pip install annona` cannot drift apart in version.
-  release:
-    types: [published]
+  # Every version tag ships the matching sdist and wheel, so the desktop bundles
+  # and `pip install annona` cannot drift apart in version. The tag, not the
+  # release: release.yml publishes with GITHUB_TOKEN, and events raised by that
+  # token do not start other workflows — 0.1.1 to 0.1.3 never reached PyPI.
+  push:
+    tags: ["v*"]
   # Manual, for the first run — the release that created the project predates
   # this workflow, and for re-running after a failed upload.
   workflow_dispatch:
