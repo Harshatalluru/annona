@@ -146,8 +146,13 @@ Base: `{backend-ai}/api/v1/runner/link`. JSON over HTTPS.
 |---|---|
 | `POST /enroll` `{code, name, machine_id, version}` | no credential yet; → `{runner_id, secret, organization}` |
 | `POST /heartbeat` `{version, policy_digest, substrates[], busy}` | → `{cancel: [job_id]}` |
-| `POST /claim` | → `{job: null}` or `{job: {id, lease_id, instruction, title, requested_by}}` |
-| `POST /jobs/{id}/result` `{lease_id, status, response?, placement, decisions[], ledger_head, error?}` | `status` ∈ `completed`, `withheld`, `failed`, `cancelled` |
+| `POST /claim` | → `{job: null}` or `{job: {id, lease_id, instruction, title, requested_by: {email, role, organization_id}}}` |
+| `POST /jobs/{id}/result` `{lease_id, status, response?, placement, decisions[], ledger_head, release, error?}` | `status` ∈ `completed`, `withheld`, `failed`, `cancelled`. `release` states why, never material |
+
+A result is **idempotent**: the same runner, lease and status sent twice (a lost
+response, a retry) is acknowledged unchanged. A different status on a closed job
+is `409`, so `withheld` can never be turned into `completed`. The backend drops
+any `response` that arrives with a status other than `completed`.
 
 Job states: `queued → running → completed | withheld | failed | cancelled | expired`.
 
