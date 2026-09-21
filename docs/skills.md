@@ -97,6 +97,58 @@ not.
 
 ---
 
+## Catalogs and installs from Studio
+
+A **catalog** is a published index of skills: JSON over HTTPS, one tarball per
+skill and its SHA-256. The policy names the catalogs this machine may fetch from
+and, in each, the skills it **pre-approves**:
+
+```yaml
+skill_catalogs:
+  - name: akaion
+    url: https://akaion-ai.github.io/annona/catalog/index.json
+    enable: [rfq-triage, eight-d]
+```
+
+A name in `enable` is enabled exactly as if it were under `skills:` — once it is
+installed. Until then, a linked machine lists it to Agents Studio as
+*installable*, and Studio can ask for it to be fetched when a job needs it.
+Studio never chooses *which* skills are approved; the policy already did. The
+design is [ADR 0008](adr/0008-skills-installed-on-request.md).
+
+On the way in, the archive is checked against the digest in the index before it
+is unpacked, and refused whole if any entry is a link, absolute, or climbs out of
+its folder. It then installs like any other skill you did not write: provenance
+in the front matter (`imported_from`, `catalog`, `sha256`) and **pinned local**,
+unless the catalog entry in the policy says `trust: true`. The ledger records
+each install as `skill_install`, with who asked.
+
+At the machine, the operator can install any entry of a catalog the policy
+names — it stays disabled until the policy enables it, and the command says so:
+
+```bash
+annona skills-install eight-d --from akaion
+annona skills-install eight-d --from akaion --force   # a newer version
+```
+
+Studio adds; it never replaces. A skill already on the machine — shipped,
+hand-written or installed earlier — is updated only by the `--force` above.
+
+`enable` takes names, not patterns: `*` would pre-approve whatever the publisher
+writes next.
+
+### The Akaion catalog
+
+Published with this documentation, built from `catalog/skills/` in the
+repository by `scripts/build_catalog.py`:
+
+| Skill | What it does | Pins |
+|---|---|---|
+| `rfq-triage` | customer RFQs and test specifications become one row per request with the parameters a quotation needs — device, pad pitch and count, temperature range, touchdowns, planarity, delivery — with missing mandatory fields flagged and the questions to send back | local |
+| `eight-d` | an 8D report (D0–D8) drafted from complaint emails, test logs and meeting notes: a source on every fact, containment kept apart from root cause, open questions listed | local |
+
+---
+
 ## Writing one
 
 ```markdown

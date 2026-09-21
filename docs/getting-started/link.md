@@ -77,6 +77,21 @@ annona skills-install ~/Downloads/pdf
 skills: [document-triage, case-timeline, pdf]
 ```
 
+Or let Studio fetch them when they are needed. Name a catalog and the skills you
+pre-approve from it; the heartbeat lists those not yet installed, and Studio can
+ask for one — never for anything else:
+
+```yaml
+skill_catalogs:
+  - name: akaion
+    url: https://akaion-ai.github.io/annona/catalog/index.json
+    enable: [rfq-triage, eight-d]
+```
+
+The archive is verified against the catalog's SHA-256, installed pinned local,
+and recorded in the ledger with who asked. See
+[Catalogs and installs from Studio](../skills.md#catalogs-and-installs-from-studio).
+
 ## 3. Serve, detached
 
 Foreground: `annona link serve`. On a server, as a service:

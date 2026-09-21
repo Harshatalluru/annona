@@ -6,6 +6,30 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### Skills Studio can install, from a list the policy wrote
+
+`skill_catalogs` names a catalog and the skills pre-approved from it (ADR 0008).
+Pre-approved skills are enabled once installed; a linked machine lists the ones
+it does not have yet in its heartbeat (`installable`), and Studio can send an
+`install_skill` job for one of them — nothing else. The archive is checked
+against the SHA-256 in the index before it is unpacked, unpacking refuses links
+and paths outside the folder, and the skill is pinned local unless the catalog
+is `trust: true`. The ledger records every install as `skill_install` with who
+asked. At the machine: `annona skills-install <name> --from <catalog>`.
+
+```yaml
+skill_catalogs:
+  - name: akaion
+    url: https://akaion-ai.github.io/annona/catalog/index.json
+    enable: [rfq-triage, eight-d]
+```
+
+The first catalog is published with the docs: `rfq-triage` (the parameters a
+quotation needs, from customer RFQs and specifications) and `eight-d` (an 8D
+report drafted from complaints, logs and notes, a source on every line). Built
+reproducibly by `scripts/build_catalog.py`; a test fails if the published index
+and its sources disagree.
+
 ### A higher ceiling for the Studio in the building
 
 `link.endpoints` binds a release ceiling to one named Studio (ADR 0007): a

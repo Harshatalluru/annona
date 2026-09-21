@@ -18,6 +18,7 @@ and the old one stays readable.
 | [0005](0005-name-the-project-annona.md) | Name the project Annona | Accepted |
 | [0006](0006-runner-link.md) | Link a runner to Agents Studio: outbound only, its own credential | Accepted |
 | [0007](0007-release-bound-to-endpoint.md) | Bind a higher release ceiling to the Studio it is for | Accepted |
+| [0008](0008-skills-installed-on-request.md) | Skills installed on request: the policy pre-approves, Studio only says when | Accepted |
 
 ## Writing one
 

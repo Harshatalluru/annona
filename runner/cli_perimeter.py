@@ -241,7 +241,7 @@ def skills(
 
     registry = SkillRegistry(
         installed,
-        allowed=policy.skills.allow,
+        allowed=policy.enabled_skills,
         vision=any(s.vision for s in policy.substrates),
         allowed_tools=tuple(policy.tools.allow),
         context_window=max((s.context_window for s in policy.substrates), default=0),
@@ -277,7 +277,9 @@ def skills(
 
 def skills_install(
     source: str = typer.Argument(
-        ..., help="Folder, SKILL.md, or the name of a skill in ~/.claude/skills"
+        ...,
+        help="Folder, SKILL.md, the name of a skill in ~/.claude/skills, "
+        "or with --from the name of a catalog entry",
     ),
     name: str = typer.Option("", "--name", "-n", help="Install under a different name"),
     trust: bool = typer.Option(
@@ -285,15 +287,36 @@ def skills_install(
     ),
     force: bool = typer.Option(False, "--force", help="Replace an existing installation"),
     home: Path = typer.Option(None, "--home", help="Skills directory (default ~/.annona/skills)"),
+    catalog: str = typer.Option(
+        "", "--from", help="Fetch it from this catalog in the policy's skill_catalogs"
+    ),
 ):
-    """📥 Install a skill somebody else wrote — including Claude's."""
+    """📥 Install a skill somebody else wrote — Claude's, or one from a catalog."""
+    from dataclasses import replace
+
+    from runner.skills.catalog import install_from_catalog
     from runner.skills.install import install_skill
     from runner.skills.loader import skills_dirs
 
     target = Path(home) if home else skills_dirs()[-1]
+    policy = None
 
     try:
-        installed = install_skill(source, target, name=name or None, trust=trust, force=force)
+        if catalog:
+            if name:
+                # The policy enables a skill by its own name; a renamed copy
+                # would be a different skill as far as the policy is concerned.
+                raise ConfigurationError("--name cannot rename a skill from a catalog")
+            policy, _ = _load()
+            chosen = next((c for c in policy.skill_catalogs if c.name == catalog), None)
+            if chosen is None:
+                raise ConfigurationError(f"the policy names no skill catalog {catalog!r}")
+            installed, entry = install_from_catalog(
+                replace(chosen, trust=chosen.trust or trust), source, target, force=force
+            )
+            console.print(f"\n🔏 sha256 {entry.sha256} verified against {chosen.url}")
+        else:
+            installed = install_skill(source, target, name=name or None, trust=trust, force=force)
     except ConfigurationError as exc:
         console.print(f"❌ [red]{escape(str(exc))}[/red]")
         raise typer.Exit(1) from exc
@@ -319,9 +342,13 @@ def skills_install(
             "still work; the automation in them does not."
         )
 
+    if policy is not None and skill.name in policy.enabled_skills:
+        console.print("\n🟢 [green]enabled[/green] — the policy names it.")
+        return
     console.print(
         f"\n[bold]Not enabled yet.[/bold] Add it to your policy to offer it to a model:\n"
         f"  [cyan]{escape(f'skills: [{skill.name}]')}[/cyan]"
+        + (f" [dim]or to skill_catalogs {catalog}'s enable[/dim]" if catalog else "")
     )
 
 

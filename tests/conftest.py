@@ -146,3 +146,13 @@ def sample_dir(tmp_path):
     (tmp_path / ".hidden_file").write_text("secret=do_not_read\n")
 
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _fresh_catalog_cache():
+    """Catalog indexes are cached in-process; one test's index is not another's."""
+    from runner.skills import catalog
+
+    catalog._indexes.clear()
+    yield
+    catalog._indexes.clear()

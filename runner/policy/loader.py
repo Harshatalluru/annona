@@ -21,12 +21,14 @@ import yaml
 from runner.kernel.errors import PolicyError
 from runner.kernel.types import SensitivityClass
 from runner.policy.models import (
+    SKILL_NAME,
     ClassSpec,
     EgressPolicy,
     LinkPolicy,
     Policy,
     Rule,
     SealedSpec,
+    SkillCatalog,
     SkillPolicy,
     Substrate,
     ToolPolicy,
@@ -240,6 +242,45 @@ def _parse_skills(raw: Any) -> SkillPolicy:
     return SkillPolicy(allow=tuple(str(name) for name in _require_sequence(raw, "skills")))
 
 
+def _parse_skill_catalogs(raw: Any) -> tuple[SkillCatalog, ...]:
+    """Parse ``skill_catalogs:`` — where skills may be fetched from, and which are pre-approved.
+
+    Every name in ``enable`` is a decision about one skill, so no wildcards:
+    ``*`` would pre-approve whatever the catalog publishes next (ADR 0008). A
+    skill enabled by two catalogs is an error, not first-match — which one it is
+    fetched from would otherwise be decided by file order.
+    """
+    catalogs: list[SkillCatalog] = []
+    owner: dict[str, str] = {}
+    for index, entry in enumerate(_require_sequence(raw, "skill_catalogs")):
+        where = f"skill_catalogs[{index}]"
+        body = _require_mapping(entry, where)
+        name = str(body.get("name", ""))
+        if not SKILL_NAME.match(name):
+            raise PolicyError(f"{where}.name: {name!r} is not a valid catalog name")
+        if any(c.name == name for c in catalogs):
+            raise PolicyError(f"{where}.name: {name!r} is already listed")
+        try:
+            url = normalise_endpoint(str(body.get("url", "")))
+        except ValueError as exc:
+            raise PolicyError(f"{where}.url: {exc}") from exc
+        enable = tuple(str(n) for n in _require_sequence(body.get("enable"), f"{where}.enable"))
+        for skill in enable:
+            if not SKILL_NAME.match(skill):
+                raise PolicyError(
+                    f"{where}.enable: {skill!r} is not a skill name; each pre-approved "
+                    "skill is named, there are no wildcards"
+                )
+            if skill in owner:
+                raise PolicyError(f"{where}.enable: {skill!r} is already enabled by {owner[skill]}")
+            owner[skill] = name
+        trust = body.get("trust", False)
+        if not isinstance(trust, bool):
+            raise PolicyError(f"{where}.trust must be true or false")
+        catalogs.append(SkillCatalog(name=name, url=url, enable=enable, trust=trust))
+    return tuple(catalogs)
+
+
 def _parse_link(raw: Mapping[str, Any]) -> LinkPolicy:
     """Parse the ``link:`` section — the ceiling on what goes back to Studio.
 
@@ -369,6 +410,7 @@ def parse_policy(document: Mapping[str, Any], *, source: str = "<memory>") -> Po
         redaction=redaction,
         skills=skills,
         link=_parse_link(_require_mapping(document.get("link"), "link")),
+        skill_catalogs=_parse_skill_catalogs(document.get("skill_catalogs")),
         source=source,
     )
 

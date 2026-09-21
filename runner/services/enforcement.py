@@ -317,7 +317,7 @@ class Enforcement:
             # Discovered even when the policy allows none: `annona skills` has to
             # be able to say "this exists and you have not enabled it", which is
             # a different sentence from "this does not exist".
-            skills = discover_skills() if policy.skills.allow else {}
+            skills = discover_skills() if policy.enabled_skills else {}
 
         return cls(
             policy=policy,
@@ -352,7 +352,7 @@ class Enforcement:
         """Skills this policy permits and this deployment can actually run."""
         return SkillRegistry(
             self.skills,
-            allowed=self.policy.skills.allow,
+            allowed=self.policy.enabled_skills,
             vision=any(s.vision for s in self.policy.substrates),
             allowed_tools=tuple(self.policy.tools.allow),
             context_window=max((s.context_window for s in self.policy.substrates), default=0),

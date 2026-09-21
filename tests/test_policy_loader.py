@@ -185,6 +185,44 @@ def test_a_link_endpoint_without_a_release_is_refused():
         parse(link={"endpoints": [{"url": "https://studio.intranet.example"}]})
 
 
+CATALOG = {"name": "akaion", "url": "https://catalog.example/index.json", "enable": ["rfq-triage"]}
+
+
+@pytest.mark.parametrize(
+    ("catalogs", "message"),
+    [
+        (
+            [{**CATALOG, "url": "http://catalog.example/index.json"}],
+            r"skill_catalogs\[0\]\.url.*https",
+        ),
+        ([CATALOG, {**CATALOG, "enable": []}], "already listed"),
+        ([{**CATALOG, "enable": ["*"]}], "no wildcards"),
+        ([{**CATALOG, "enable": ["rfq-*"]}], "no wildcards"),
+        ([{**CATALOG, "enable": ["../escape"]}], "not a skill name"),
+        ([CATALOG, {**CATALOG, "name": "other"}], "already enabled by akaion"),
+        ([{**CATALOG, "trust": "yes"}], "true or false"),
+    ],
+    ids=["http", "twice", "star", "glob", "path", "enabled-twice", "trust-string"],
+)
+def test_a_skill_catalog_is_refused_when_it_promises_more_than_it_names(catalogs, message):
+    with pytest.raises(PolicyError, match=message):
+        parse(skill_catalogs=catalogs)
+
+
+def test_enabled_skills_are_the_named_ones_plus_every_catalogs_enable():
+    policy = parse(
+        skills=["second-opinion", "rfq-triage"],
+        skill_catalogs=[
+            {**CATALOG, "enable": ["rfq-triage", "eight-d"]},
+            {"name": "house", "url": "https://skills.intranet.example/index.json"},
+        ],
+    )
+    assert policy.enabled_skills == ("second-opinion", "rfq-triage", "eight-d")
+    assert policy.catalog_enabling("eight-d").name == "akaion"
+    assert policy.catalog_enabling("second-opinion") is None
+    assert policy.skill_catalogs[1].enable == () and not policy.skill_catalogs[1].trust
+
+
 def test_unknown_on_unavailable_is_refused():
     with pytest.raises(PolicyError, match="on_unavailable must be"):
         parse(rules=[{"match": {"class": "public"}, "allow": ["local"], "on_unavailable": "retry"}])

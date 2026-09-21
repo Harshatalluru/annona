@@ -89,11 +89,11 @@ def enforced(response: str, klass: str = "internal", sealed: str = ""):
     return run
 
 
-def worker(policy_file: Path, run, handler=None, endpoint: str = ENDPOINT) -> LinkWorker:
+def worker(policy_file: Path, run, handler=None, endpoint: str = ENDPOINT, **kwargs) -> LinkWorker:
     transport = httpx.MockTransport(handler or (lambda r: httpx.Response(200, json={})))
     client = LinkClient(config(endpoint), client=httpx.Client(transport=transport))
     return LinkWorker(
-        client, run, policy_file=policy_file, poll_seconds=0.01, heartbeat_seconds=0.01
+        client, run, policy_file=policy_file, poll_seconds=0.01, heartbeat_seconds=0.01, **kwargs
     )
 
 
@@ -362,6 +362,102 @@ def test_a_skill_the_policy_does_not_enable_fails_without_running(policy_file: P
     )
     assert body["status"] == "failed" and "not enabled" in body["error"]
     assert not called
+
+
+# ── Installs Studio may ask for (ADR 0008) ───────────────────────────────────
+
+CATALOG_URL = "https://akaion-ai.github.io/annona/catalog/index.json"
+PUBLISHED = Path(__file__).resolve().parent.parent / "docs" / "catalog"
+INSTALL = {**JOB, "id": "job-i", "kind": "install_skill", "skill": "rfq-triage"}
+
+
+def with_catalog(policy_file: Path, *enable: str) -> Path:
+    doc = yaml.safe_load(policy_file.read_text(encoding="utf-8"))
+    doc["skill_catalogs"] = [{"name": "akaion", "url": CATALOG_URL, "enable": list(enable)}]
+    policy_file.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return policy_file
+
+
+def catalog_worker(policy_file: Path, run=None, *, down: bool = False) -> LinkWorker:
+    """A worker whose catalog is the one this repository publishes."""
+
+    def publish(request: httpx.Request) -> httpx.Response:
+        path = PUBLISHED / request.url.path.rsplit("/", 1)[-1]
+        if down or not path.is_file():
+            return httpx.Response(503 if down else 404)
+        return httpx.Response(200, content=path.read_bytes())
+
+    catalog = httpx.Client(transport=httpx.MockTransport(publish))
+    return worker(policy_file, run or enforced("x"), catalog_client=catalog)
+
+
+def test_the_heartbeat_offers_pre_approved_skills_not_yet_installed(policy_file: Path):
+    w = catalog_worker(with_catalog(policy_file, "rfq-triage", "eight-d", "not-published"))
+    offered = w.report()["installable"]
+    assert [(s["name"], s["catalog"], s["pins"]) for s in offered] == [
+        ("rfq-triage", "akaion", "local"),
+        ("eight-d", "akaion", "local"),
+    ]
+    assert set(offered[0]) == {"name", "version", "description", "pins", "catalog"}
+
+    assert w.run_job(INSTALL)["status"] == "completed"
+    assert [s["name"] for s in w.report()["installable"]] == ["eight-d"]
+
+
+def test_an_unreachable_catalog_does_not_break_the_heartbeat(policy_file: Path):
+    report = catalog_worker(with_catalog(policy_file, "rfq-triage"), down=True).report()
+    assert report["installable"] == []
+    assert report["substrates"], "the rest of the heartbeat is still there"
+
+
+def test_an_install_job_fetches_a_pre_approved_skill_without_running_a_model(policy_file: Path):
+    called = []
+    w = catalog_worker(with_catalog(policy_file, "rfq-triage"), lambda *a: called.append(a))
+    body = w.run_job(INSTALL)
+
+    index = json.loads((PUBLISHED / "index.json").read_text(encoding="utf-8"))
+    sha = next(s["sha256"] for s in index["skills"] if s["name"] == "rfq-triage")
+    assert not called
+    assert body == {
+        "lease_id": "lease-1",
+        "status": "completed",
+        "response": f"Installed rfq-triage 1 from akaion (sha256 {sha[:12]}…); pinned local; "
+        "enabled by skill_catalogs.enable",
+        "skill": "rfq-triage",
+    }
+
+    from runner.skills.loader import discover_skills
+
+    assert discover_skills()["rfq-triage"].pins_local
+    (entry,) = list(read_entries(policy_file.parent / "ledger.jsonl"))
+    assert (entry.kind, entry.outcome) == ("skill_install", "installed")
+    assert entry.detail["catalog"] == "akaion" and entry.detail["sha256"] == sha
+    assert entry.detail["requested_by"]["email"] == "ada@technoprobe.example"
+
+    again = w.run_job({**INSTALL, "id": "job-j"})
+    assert again["status"] == "failed" and "already installed" in again["error"]
+
+
+def test_an_install_job_for_a_skill_the_policy_does_not_pre_approve_is_refused(policy_file: Path):
+    w = catalog_worker(with_catalog(policy_file, "eight-d"))
+    body = w.run_job(INSTALL)
+    assert body == {
+        "lease_id": "lease-1",
+        "status": "failed",
+        "error": "skill 'rfq-triage' is not pre-approved by this machine's policy",
+    }
+    (entry,) = list(read_entries(policy_file.parent / "ledger.jsonl"))
+    assert (entry.kind, entry.outcome) == ("skill_install", "refused")
+    assert entry.detail["requested_by"]["email"] == "ada@technoprobe.example"
+
+    from runner.skills.loader import discover_skills
+
+    assert "rfq-triage" not in discover_skills()
+
+
+def test_an_unknown_job_kind_is_refused(policy_file: Path):
+    body = worker(policy_file, enforced("x")).run_job({**JOB, "kind": "shell"})
+    assert body["status"] == "failed" and "shell" in body["error"]
 
 
 def test_no_policy_means_no_remote_work(tmp_path: Path):

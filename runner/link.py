@@ -27,6 +27,12 @@ that metadata.
 policy enables; a job may name one, and it is loaded before the first turn
 through the same ``skill`` tool a model would call — same permission, same pin,
 same ledger entry. A name the policy does not enable fails the job.
+
+**Studio asks for installs, the policy has already answered.** The heartbeat
+also lists what the policy pre-approves in ``skill_catalogs`` and this machine
+does not have yet. A job of kind ``install_skill`` fetches one of those — and
+only those — from the catalog the policy names, verified against its SHA-256
+(ADR 0008). No model runs; the ledger records who asked.
 """
 
 from __future__ import annotations
@@ -47,12 +53,14 @@ import httpx
 from loguru import logger
 
 from runner.audit.ledger import Ledger, read_entries
+from runner.kernel.errors import ConfigurationError
 from runner.kernel.types import SensitivityClass
 from runner.policy.classifier import PolicyClassifier
 from runner.policy.loader import load_policy
 from runner.policy.models import Policy, normalise_endpoint
 from runner.services.enforcement import policy_path
-from runner.skills.loader import discover_skills
+from runner.skills.catalog import install_from_catalog, installable
+from runner.skills.loader import discover_skills, skills_dirs
 from runner.skills.registry import SkillRegistry
 
 __all__ = [
@@ -324,11 +332,11 @@ RunFn = Callable[[str, Callable[[], bool], "str | None"], Mapping[str, Any]]
 
 def usable_skills(policy: Policy) -> tuple[Any, ...]:
     """Skills this policy enables and this machine can run — what Studio may name."""
-    if not policy.skills.allow:
+    if not policy.enabled_skills:
         return ()
     return SkillRegistry(
         discover_skills(),
-        allowed=policy.skills.allow,
+        allowed=policy.enabled_skills,
         vision=any(s.vision for s in policy.substrates),
         allowed_tools=tuple(policy.tools.allow),
         context_window=max((s.context_window for s in policy.substrates), default=0),
@@ -392,8 +400,10 @@ class LinkWorker:
         version: str = "",
         poll_seconds: float = POLL_SECONDS,
         heartbeat_seconds: float = HEARTBEAT_SECONDS,
+        catalog_client: httpx.Client | None = None,
     ) -> None:
         self._client = client
+        self._catalog_client = catalog_client
         self._run = run
         self._policy_file = policy_file or policy_path()
         self._ledger_file = self._policy_file.parent / "ledger.jsonl"
@@ -404,13 +414,19 @@ class LinkWorker:
         self._cancelled: set[str] = set()
         self._lock = threading.Lock()
 
-    # One place that writes link entries, so every one carries who asked.
+    # One place that writes job entries, so every one carries who asked.
     def _record(
-        self, outcome: str, klass: SensitivityClass, job: Mapping[str, Any], **detail: Any
+        self,
+        outcome: str,
+        klass: SensitivityClass,
+        job: Mapping[str, Any],
+        *,
+        kind: str = "link",
+        **detail: Any,
     ) -> None:
         requested_by = job.get("requested_by") or {}
         Ledger(self._ledger_file).record(
-            "link",
+            kind,
             outcome=outcome,
             klass=klass,
             step_id=f"job:{job.get('id', '')}",
@@ -427,6 +443,7 @@ class LinkWorker:
         """The heartbeat body: what this runner is, never where its data is."""
         substrates: list[dict[str, Any]] = []
         skills: list[dict[str, Any]] = []
+        offered: list[dict[str, Any]] = []
         tools: list[str] = []
         try:
             policy = load_policy(self._policy_file)
@@ -445,6 +462,7 @@ class LinkWorker:
                 }
                 for s in policy.substrates
             ]
+            offered = installable(policy, set(discover_skills()), client=self._catalog_client)
         except Exception:  # noqa: BLE001 — a broken policy is reported as none
             pass
         return {
@@ -452,6 +470,7 @@ class LinkWorker:
             "policy_digest": _policy_digest(self._policy_file),
             "substrates": substrates[:50],
             "skills": skills,
+            "installable": offered,
             "tools": tools,
             "busy": self._current is not None,
             "platform": platform.system().lower(),
@@ -479,6 +498,13 @@ class LinkWorker:
                 "status": "failed",
                 "error": "this runner has no usable policy and does not accept remote work without one",
             }
+
+        kind = str(job.get("kind") or "run")[:40]
+        if kind == "install_skill":
+            return self._install(job, policy, base)
+        if kind != "run":
+            self._record("refused", SensitivityClass.PUBLIC, job, reason=f"unknown kind {kind!r}")
+            return {**base, "status": "failed", "error": f"this runner has no job kind {kind!r}"}
 
         instruction = str(job.get("instruction", ""))[:MAX_INSTRUCTION_CHARS]
         skill = str(job.get("skill") or "") or None
@@ -576,6 +602,74 @@ class LinkWorker:
         )
         self._record("withheld", run_class, job, reason=why)
         return {**body, "status": "withheld"}
+
+    def _install(
+        self, job: Mapping[str, Any], policy: Policy, base: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Install one pre-approved skill. No model runs, no material is read.
+
+        The name must be in some catalog's ``enable``: Studio chooses when a
+        pre-approved skill arrives, never which skills are approved. An
+        installed skill is never replaced from here — a newer version is the
+        operator's ``skills-install --force`` at the machine.
+        """
+        name = str(job.get("skill") or "")[:64]
+        catalog = policy.catalog_enabling(name)
+
+        def refuse(error: str, **detail: Any) -> dict[str, Any]:
+            self._record(
+                "refused",
+                SensitivityClass.PUBLIC,
+                job,
+                kind="skill_install",
+                skill=name,
+                reason=error,
+                **detail,
+            )
+            return {**base, "status": "failed", "error": error}
+
+        if catalog is None:
+            return refuse(f"skill {name!r} is not pre-approved by this machine's policy")
+        try:
+            if name in discover_skills():
+                return refuse(
+                    f"skill {name!r} is already installed on this machine", catalog=catalog.name
+                )
+            installed, entry = install_from_catalog(
+                catalog, name, skills_dirs()[-1], client=self._catalog_client
+            )
+        except ConfigurationError as exc:
+            # Catalog and archive errors name URLs and digests, never material.
+            return refuse(str(exc), catalog=catalog.name)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("skill install failed")
+            return refuse(
+                f"the install failed on the runner ({type(exc).__name__})", catalog=catalog.name
+            )
+
+        pinning = "pinned local" if installed.pinned else "trusted"
+        self._record(
+            "installed",
+            SensitivityClass.PUBLIC,
+            job,
+            kind="skill_install",
+            skill=name,
+            catalog=catalog.name,
+            version=entry.version,
+            sha256=entry.sha256,
+            reason=f"pre-approved by skill_catalogs.enable; {pinning}",
+        )
+        # No release decision: the response is built from the catalog entry and
+        # nothing on this machine was read, so there is no material to withhold.
+        return {
+            **base,
+            "status": "completed",
+            "response": (
+                f"Installed {name} {entry.version} from {catalog.name} "
+                f"(sha256 {entry.sha256[:12]}…); {pinning}; enabled by skill_catalogs.enable"
+            ),
+            "skill": name,
+        }
 
     def serve(self, stop: threading.Event) -> None:
         """Poll until ``stop`` is set or the credential is revoked."""

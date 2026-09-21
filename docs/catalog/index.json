@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "eight-d",
+      "version": 1,
+      "description": "Draft an 8D problem-solving report (D0–D8) from complaint emails, test logs and meeting notes, with a source for every fact and containment kept apart from root cause.",
+      "pins": "local",
+      "sha256": "bbbfff78e08cca9855c0a508e4ee79aee18b9fb169ea568904308bb840060f55",
+      "archive": "eight-d-bbbfff78e08c.tar.gz"
+    },
+    {
+      "name": "rfq-triage",
+      "version": 1,
+      "description": "Turn customer RFQs and test specifications into one row per request with the parameters a quotation needs, and list what is missing before anyone prices it.",
+      "pins": "local",
+      "sha256": "36c3beb35aee505e464b1a7168137b2c2922cb19cbe56ccfc71f88c6331d1ace",
+      "archive": "rfq-triage-36c3beb35aee.tar.gz"
+    }
+  ]
+}

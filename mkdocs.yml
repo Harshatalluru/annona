@@ -78,6 +78,9 @@ nav:
       - 0003 Ship an offline backend: adr/0003-offline-echo-backend.md
       - 0004 Name the project Dogana: adr/0004-name-the-project-dogana.md
       - 0005 Name the project Annona: adr/0005-name-the-project-annona.md
+      - 0006 Link a runner to Agents Studio: adr/0006-runner-link.md
+      - 0007 Bind a release ceiling to its Studio: adr/0007-release-bound-to-endpoint.md
+      - 0008 Skills installed on request: adr/0008-skills-installed-on-request.md
   - Contributing: contributing.md
 
 extra_css:

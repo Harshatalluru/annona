@@ -45,6 +45,8 @@ __all__ = [
     "Prefer",
     "Rule",
     "LinkPolicy",
+    "SKILL_NAME",
+    "SkillCatalog",
     "SkillPolicy",
     "Substrate",
     "ToolPolicy",
@@ -329,6 +331,32 @@ class SkillPolicy:
         return name in self.allow
 
 
+SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+"""What a skill name may be when it travels: in a catalog, a heartbeat, a job.
+
+Narrow on purpose. A name from the network becomes a directory under
+``$ANNONA_HOME/skills``, so it can hold no separator, no ``..``, no wildcard.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class SkillCatalog:
+    """A published index of skills this machine may fetch. See ADR 0008.
+
+    ``enable`` is the pre-approval: each name listed may be installed when
+    Studio asks, and is enabled once installed, exactly as if it were under
+    ``skills:``. A catalog entry not listed may still be installed by the
+    operator at the machine, and stays disabled until the policy names it.
+    """
+
+    name: str
+    url: str
+    """The index, normalised by :func:`normalise_endpoint`: https only."""
+    enable: tuple[str, ...] = ()
+    trust: bool = False
+    """Keep each skill's own ``pins`` instead of pinning it local on install."""
+
+
 @dataclass(frozen=True, slots=True)
 class LinkPolicy:
     """What a linked control plane (Agents Studio) may receive back.
@@ -389,7 +417,23 @@ class Policy:
     redaction: RedactionPolicy = field(default_factory=RedactionPolicy)
     skills: SkillPolicy = field(default_factory=SkillPolicy)
     link: LinkPolicy = field(default_factory=LinkPolicy)
+    skill_catalogs: tuple[SkillCatalog, ...] = ()
     source: str = "<memory>"
+
+    @property
+    def enabled_skills(self) -> tuple[str, ...]:
+        """Every skill this policy enables: ``skills:`` plus each catalog's ``enable``.
+
+        The one list every consumer reads, so a pre-approved catalog skill and
+        a hand-named one cannot be treated differently by accident. Enabled is
+        still not usable: the ``skill`` tool has to be allowed too.
+        """
+        named = [*self.skills.allow, *(n for c in self.skill_catalogs for n in c.enable)]
+        return tuple(dict.fromkeys(named))
+
+    def catalog_enabling(self, name: str) -> SkillCatalog | None:
+        """The catalog that pre-approves ``name``, if any. At most one can."""
+        return next((c for c in self.skill_catalogs if name in c.enable), None)
 
     # ── Lookups ───────────────────────────────────────────────────────────────
 

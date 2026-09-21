@@ -27,6 +27,7 @@ Two more things are stated at install time rather than discovered later:
 from __future__ import annotations
 
 import shutil
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,7 +82,9 @@ def resolve_source(source: str | Path) -> Path:
     )
 
 
-def _restamp(path: Path, *, source: Path, trust: bool) -> None:
+def _restamp(
+    path: Path, *, source: Path, trust: bool, provenance: Mapping[str, str] | None = None
+) -> None:
     """Rewrite the front matter with provenance, and pin unless trusted.
 
     The body is copied byte for byte. Only the front matter is touched, and the
@@ -94,6 +97,7 @@ def _restamp(path: Path, *, source: Path, trust: bool) -> None:
 
     meta["imported_from"] = str(source)
     meta["imported_at"] = datetime.now(timezone.utc).date().isoformat()
+    meta.update(provenance or {})
 
     if not trust and str(meta.get("pins", "none")).lower() != "local":
         meta["pins"] = "local"
@@ -112,6 +116,7 @@ def install_skill(
     name: str | None = None,
     trust: bool = False,
     force: bool = False,
+    provenance: Mapping[str, str] | None = None,
 ) -> InstalledSkill:
     """Copy a skill folder into the operator's skills directory.
 
@@ -122,6 +127,9 @@ def install_skill(
         name: override the installed directory name.
         trust: keep the skill's own ``pins`` value instead of pinning it local.
         force: replace an existing installation of the same name.
+        provenance: front matter keys that say where the skill came from better
+            than the folder does — a catalog install unpacks into a temporary
+            directory, and ``imported_from`` should name the archive instead.
 
     Raises:
         ConfigurationError: the source does not exist, does not validate, or
@@ -150,7 +158,7 @@ def install_skill(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(folder, destination)
 
-    _restamp(destination / "SKILL.md", source=folder, trust=trust)
+    _restamp(destination / "SKILL.md", source=folder, trust=trust, provenance=provenance)
     installed = load_skill(destination / "SKILL.md")
 
     has_scripts = (

@@ -1,0 +1,3 @@
+# The catalog's SHA-256 digests are computed from these bytes: a CRLF checkout
+# would rebuild to different archives and fail the reproducibility test.
+catalog/** text eol=lf

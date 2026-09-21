@@ -454,7 +454,7 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
                 "allow": {tool: list(paths) for tool, paths in sorted(policy.tools.allow.items())},
                 "deny_paths": list(policy.tools.deny_paths),
             },
-            "skills": list(policy.skills.allow),
+            "skills": list(policy.enabled_skills),
             "redaction": {
                 "enabled": policy.redaction.enabled,
                 "provider": policy.redaction.provider,
