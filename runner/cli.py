@@ -1054,6 +1054,11 @@ from runner.cli_setup import register as _register_setup  # noqa: E402
 
 _register_setup(app)
 
+# The link to Agents Studio: outbound only, its own credential (ADR 0006).
+from runner.cli_link import register as _register_link  # noqa: E402
+
+_register_link(app)
+
 
 @app.callback(invoke_without_command=True)
 def main_callback(ctx: typer.Context):

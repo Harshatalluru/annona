@@ -1,0 +1,490 @@
+"""The link: this machine as an executor for Agents Studio, dialling out only.
+
+ADR 0006 is the argument; this module is the runner half of it. Three things
+are worth knowing before reading the code.
+
+**Nothing listens.** Every connection is opened from here, to one endpoint the
+operator typed, over HTTPS. The machine that holds the material exposes no port
+for this feature, which is what makes it acceptable on a DGX behind a corporate
+firewall.
+
+**The credential is the machine's, not a person's.** It is traded once for a
+single-use enrollment code an org admin created, stored in ``link.json`` with
+mode ``0600``, and revoked from Studio. It can heartbeat, claim a job addressed
+to this runner, and report on a job it holds. Nothing else.
+
+**What goes back is a policy decision.** Studio is a destination outside the
+machine, so a job's answer is egress. It is released only when the run's working
+set, its seal and the answer's own text all sit at or below ``link.release`` in
+the policy. Otherwise the job is reported ``withheld``: Studio learns the job
+finished and where it was placed, and the answer stays here. A policy with no
+``link:`` section releases nothing but that metadata.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import platform
+import socket
+import threading
+import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+from loguru import logger
+
+from runner.audit.ledger import Ledger, read_entries
+from runner.kernel.types import SensitivityClass
+from runner.policy.classifier import PolicyClassifier
+from runner.policy.loader import load_policy
+from runner.policy.models import Policy
+from runner.services.enforcement import policy_path
+
+__all__ = [
+    "LinkClient",
+    "LinkConfig",
+    "LinkError",
+    "LinkRevokedError",
+    "LinkWorker",
+    "check_endpoint",
+    "enroll",
+    "link_path",
+    "release_decision",
+]
+
+API_PREFIX = "/api/v1/runner/link"
+POLL_SECONDS = 3.0
+HEARTBEAT_SECONDS = 15.0
+MAX_INSTRUCTION_CHARS = 20_000
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
+
+class LinkError(RuntimeError):
+    """The link could not do what was asked; the message says why."""
+
+
+class LinkRevokedError(LinkError):
+    """The control plane no longer accepts this runner's credential."""
+
+
+# ── Configuration ────────────────────────────────────────────────────────────
+
+
+def link_path() -> Path:
+    """``$ANNONA_HOME/link.json`` — next to the policy it answers to."""
+    return policy_path().parent / "link.json"
+
+
+def check_endpoint(url: str) -> str:
+    """Refuse anything but HTTPS, except loopback for development.
+
+    A runner secret sent over plain HTTP is a secret handed to every network
+    between here and Studio, and the material behind it with it.
+    """
+    parsed = urlparse(url.strip())
+    if parsed.scheme == "https" and parsed.hostname:
+        return url.strip().rstrip("/")
+    if parsed.scheme == "http" and parsed.hostname in _LOOPBACK:
+        return url.strip().rstrip("/")
+    raise LinkError(f"refusing {url!r}: the link only speaks https (http is allowed on loopback)")
+
+
+@dataclass(frozen=True)
+class LinkConfig:
+    endpoint: str
+    runner_id: str
+    secret: str
+    name: str
+    organization: str = ""
+
+    @classmethod
+    def load(cls, path: Path | None = None) -> LinkConfig | None:
+        path = path or link_path()
+        if not path.exists():
+            return None
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            # Readable by someone other than the owner means the secret may
+            # already be somebody else's. Refuse rather than quietly chmod: the
+            # operator needs to know it happened.
+            raise LinkError(
+                f"{path} is mode {oct(mode)}; it holds this runner's secret and must be 0600. "
+                "Fix it with `chmod 600`, or revoke the runner in Studio and enroll again."
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return cls(
+            **{k: data[k] for k in ("endpoint", "runner_id", "secret", "name")},
+            organization=data.get("organization", ""),
+        )
+
+    def save(self, path: Path | None = None) -> Path:
+        path = path or link_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        # Created 0600 from the first byte, not chmod-ed after writing: there is
+        # no window in which the secret sits in a world-readable file.
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(asdict(self), fh, indent=2)
+        os.replace(tmp, path)
+        return path
+
+
+def machine_id() -> str:
+    """Stable per machine, and not the hostname itself."""
+    raw = f"{socket.gethostname()}:{uuid.getnode()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+# ── Wire ─────────────────────────────────────────────────────────────────────
+
+
+def _raise_for(response: httpx.Response) -> None:
+    if response.status_code == 401:
+        raise LinkRevokedError(
+            "the control plane refused this runner's credential — revoked in Studio, "
+            "or enrolled elsewhere. Enroll again with a new code."
+        )
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("detail", response.text)
+        except ValueError:
+            detail = response.text
+        raise LinkError(
+            f"{response.request.method} {response.request.url.path}: "
+            f"{response.status_code} {detail}"
+        )
+
+
+def enroll(
+    endpoint: str,
+    code: str,
+    name: str,
+    *,
+    version: str,
+    client: httpx.Client | None = None,
+) -> LinkConfig:
+    """Trade a single-use enrollment code for this runner's own credential."""
+    endpoint = check_endpoint(endpoint)
+    http = client or httpx.Client(timeout=30)
+    response = http.post(
+        f"{endpoint}{API_PREFIX}/enroll",
+        json={"code": code.strip(), "name": name, "machine_id": machine_id(), "version": version},
+    )
+    _raise_for(response)
+    body = response.json()
+    return LinkConfig(
+        endpoint=endpoint,
+        runner_id=str(body["runner_id"]),
+        secret=str(body["secret"]),
+        name=name,
+        organization=str(body.get("organization", "")),
+    )
+
+
+class LinkClient:
+    """The four calls a runner credential is good for."""
+
+    def __init__(self, config: LinkConfig, *, client: httpx.Client | None = None) -> None:
+        check_endpoint(config.endpoint)
+        self._config = config
+        self._http = client or httpx.Client(timeout=30)
+        self._headers = {"Authorization": f"Runner {config.runner_id}.{config.secret}"}
+
+    def _post(self, path: str, body: Mapping[str, Any] | None = None) -> Any:
+        response = self._http.post(
+            f"{self._config.endpoint}{API_PREFIX}{path}",
+            json=dict(body or {}),
+            headers=self._headers,
+        )
+        _raise_for(response)
+        return response.json()
+
+    def heartbeat(self, report: Mapping[str, Any]) -> list[str]:
+        return [str(j) for j in self._post("/heartbeat", report).get("cancel", [])]
+
+    def claim(self) -> dict[str, Any] | None:
+        return self._post("/claim").get("job")
+
+    def result(self, job_id: str, body: Mapping[str, Any]) -> None:
+        self._post(f"/jobs/{job_id}/result", body)
+
+
+# ── The decision ─────────────────────────────────────────────────────────────
+
+
+def release_decision(
+    policy: Policy,
+    *,
+    run_class: SensitivityClass,
+    sealed: str,
+    response: str,
+) -> tuple[bool, str]:
+    """Whether a job's answer may go back to the control plane, and why.
+
+    All three must hold: the run's working set, its seal, and the answer's own
+    text. The last one is not redundant — a model can quote a fiscal code it was
+    told in the instruction without ever reading a file.
+    """
+    ceiling = policy.link.release
+    if ceiling is None:
+        return False, "the policy has no link.release; only metadata leaves this machine"
+    if sealed:
+        return False, f"the run touched sealed material ({sealed}); sealed material never leaves"
+    if run_class > ceiling:
+        return False, (
+            f"the run read {run_class.label} material; "
+            f"link.release permits up to {ceiling.label}"
+        )
+    answer_class = PolicyClassifier(policy).classify_text(response)
+    if answer_class > ceiling:
+        return False, (
+            f"the answer itself classifies as {answer_class.label}; "
+            f"link.release permits up to {ceiling.label}"
+        )
+    return True, f"within link.release ({ceiling.label})"
+
+
+# ── The worker ───────────────────────────────────────────────────────────────
+
+RunFn = Callable[[str, Callable[[], bool]], Mapping[str, Any]]
+"""``(instruction, cancelled) -> reason_and_execute result``."""
+
+
+def _policy_digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:16] if path.exists() else ""
+
+
+def _decision_summary(entries: list[Any], *, with_reasons: bool) -> list[dict[str, Any]]:
+    """What Studio may see of the run's ledger entries.
+
+    Kind, outcome, class and substrate always — they are the shape of the run,
+    and without them a person cannot tell a held job from a finished one. The
+    free-text ``detail`` carries paths and reasons that name material, so it
+    travels only with a released answer, and even then only the reason.
+    """
+    out = []
+    for e in entries[-500:]:
+        item = {
+            "seq": e.seq,
+            "kind": e.kind,
+            "outcome": e.outcome,
+            "class": e.klass,
+            "substrate": e.substrate,
+            "rule_id": e.rule_id,
+        }
+        if with_reasons and isinstance(e.detail, Mapping) and e.detail.get("reason"):
+            item["reason"] = str(e.detail["reason"])[:300]
+        out.append(item)
+    return out
+
+
+class LinkWorker:
+    """Claim a job, run it through the perimeter, report what the policy permits."""
+
+    def __init__(
+        self,
+        client: LinkClient,
+        run: RunFn,
+        *,
+        policy_file: Path | None = None,
+        version: str = "",
+        poll_seconds: float = POLL_SECONDS,
+        heartbeat_seconds: float = HEARTBEAT_SECONDS,
+    ) -> None:
+        self._client = client
+        self._run = run
+        self._policy_file = policy_file or policy_path()
+        self._ledger_file = self._policy_file.parent / "ledger.jsonl"
+        self._version = version
+        self._poll = poll_seconds
+        self._beat = heartbeat_seconds
+        self._current: str | None = None
+        self._cancelled: set[str] = set()
+        self._lock = threading.Lock()
+
+    # One place that writes link entries, so every one carries who asked.
+    def _record(
+        self, outcome: str, klass: SensitivityClass, job: Mapping[str, Any], **detail: Any
+    ) -> None:
+        requested_by = job.get("requested_by") or {}
+        Ledger(self._ledger_file).record(
+            "link",
+            outcome=outcome,
+            klass=klass,
+            step_id=f"job:{job.get('id', '')}",
+            detail={
+                "job_id": str(job.get("id", "")),
+                "requested_by": {
+                    k: requested_by.get(k, "") for k in ("email", "role", "organization")
+                },
+                **detail,
+            },
+        )
+
+    def report(self) -> dict[str, Any]:
+        """The heartbeat body: what this runner is, never where its data is."""
+        substrates: list[dict[str, Any]] = []
+        try:
+            policy = load_policy(self._policy_file)
+            substrates = [
+                {
+                    "id": s.id,
+                    "kind": s.kind,
+                    "jurisdiction": s.jurisdiction,
+                    "max_class": s.max_class.label,
+                    "model": s.model,
+                }
+                for s in policy.substrates
+            ]
+        except Exception:  # noqa: BLE001 — a broken policy is reported as none
+            pass
+        return {
+            "version": self._version,
+            "policy_digest": _policy_digest(self._policy_file),
+            "substrates": substrates[:50],
+            "busy": self._current is not None,
+            "platform": platform.system().lower(),
+        }
+
+    def beat_once(self) -> None:
+        for job_id in self._client.heartbeat(self.report()):
+            with self._lock:
+                self._cancelled.add(job_id)
+
+    def run_job(self, job: Mapping[str, Any]) -> dict[str, Any]:
+        """Execute one claimed job and return the result body, without sending it."""
+        job_id = str(job["id"])
+        base = {"lease_id": job["lease_id"]}
+
+        try:
+            policy = load_policy(self._policy_file)
+        except Exception as exc:  # noqa: BLE001
+            # No perimeter, no remote work. Running an instruction from the
+            # network on the legacy unenforced path is the one thing this
+            # runner must never do.
+            self._record("refused", SensitivityClass.PUBLIC, job, reason=f"no usable policy: {exc}")
+            return {
+                **base,
+                "status": "failed",
+                "error": "this runner has no usable policy and does not accept remote work without one",
+            }
+
+        instruction = str(job.get("instruction", ""))[:MAX_INSTRUCTION_CHARS]
+        classifier = PolicyClassifier(policy)
+        self._record(
+            "received",
+            classifier.classify_text(instruction),
+            job,
+            title=str(job.get("title", ""))[:200],
+        )
+
+        before = sum(1 for _ in read_entries(self._ledger_file))
+        self._current = job_id
+        try:
+            result = self._run(instruction, lambda: job_id in self._cancelled)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("link job failed")
+            self._record("failed", SensitivityClass.PUBLIC, job, reason=type(exc).__name__)
+            # The exception text can quote material; its type cannot.
+            return {
+                **base,
+                "status": "failed",
+                "error": f"the run failed on the runner ({type(exc).__name__})",
+            }
+        finally:
+            self._current = None
+
+        entries = list(read_entries(self._ledger_file))[before:]
+        placement = result.get("placement")
+        if not placement:
+            self._record(
+                "withheld", SensitivityClass.PUBLIC, job, reason="the run was not enforced"
+            )
+            return {
+                **base,
+                "status": "failed",
+                "error": "the run did not go through the perimeter",
+                "decisions": _decision_summary(entries, with_reasons=False),
+            }
+
+        run_class = SensitivityClass.parse(placement.get("class", "restricted"))
+        response = str(result.get("response", ""))
+        cancelled = job_id in self._cancelled
+        released, why = release_decision(
+            policy, run_class=run_class, sealed=str(result.get("sealed", "")), response=response
+        )
+
+        safe_placement = {k: placement.get(k, "") for k in ("class", "outcome", "substrate")}
+        body: dict[str, Any] = {
+            **base,
+            "placement": safe_placement,
+            "ledger_head": Ledger(self._ledger_file).head,
+            "decisions": _decision_summary(entries, with_reasons=released),
+            "release": why,
+        }
+        if cancelled:
+            self._record("cancelled", run_class, job)
+            return {**body, "status": "cancelled"}
+        if released:
+            self._record("released", run_class, job, reason=why)
+            return {**body, "status": "completed", "response": response}
+        self._record("withheld", run_class, job, reason=why)
+        return {**body, "status": "withheld"}
+
+    def serve(self, stop: threading.Event) -> None:
+        """Poll until ``stop`` is set or the credential is revoked."""
+
+        def heartbeats() -> None:
+            while not stop.is_set():
+                try:
+                    self.beat_once()
+                except LinkRevokedError:
+                    stop.set()
+                except Exception as exc:  # noqa: BLE001 — the network comes and goes
+                    logger.warning(f"link heartbeat failed: {exc}")
+                stop.wait(self._beat)
+
+        threading.Thread(target=heartbeats, name="link-heartbeat", daemon=True).start()
+
+        backoff = self._poll
+        while not stop.is_set():
+            try:
+                job = self._client.claim()
+                backoff = self._poll
+            except LinkRevokedError:
+                stop.set()
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"link claim failed: {exc}; retrying in {backoff:.0f}s")
+                stop.wait(backoff)
+                backoff = min(backoff * 2, 60.0)
+                continue
+
+            if job is None:
+                stop.wait(self._poll)
+                continue
+
+            logger.info(
+                f"link: job {job['id']} from {(job.get('requested_by') or {}).get('email', '?')}"
+            )
+            body = self.run_job(job)
+            # The result is retried, the run is not: a job that ran once must
+            # not run twice because a network blip ate the acknowledgement.
+            for attempt in range(5):
+                try:
+                    self._client.result(str(job["id"]), body)
+                    break
+                except LinkRevokedError:
+                    stop.set()
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"link result not delivered ({exc}); attempt {attempt + 1}/5")
+                    stop.wait(min(2**attempt, 30))
+            logger.info(f"link: job {job['id']} → {body['status']}")

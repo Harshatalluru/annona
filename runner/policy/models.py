@@ -43,6 +43,7 @@ __all__ = [
     "Policy",
     "Prefer",
     "Rule",
+    "LinkPolicy",
     "SkillPolicy",
     "Substrate",
     "ToolPolicy",
@@ -327,6 +328,19 @@ class SkillPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class LinkPolicy:
+    """What a linked control plane (Agents Studio) may receive back.
+
+    ``release`` is the highest class whose *answer* may leave for the control
+    plane. ``None`` — no ``link:`` section — releases metadata only: a policy
+    that never mentions the link has not decided to send anything through it.
+    See ADR 0006.
+    """
+
+    release: SensitivityClass | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Policy:
     """A complete, validated policy document."""
 
@@ -338,6 +352,7 @@ class Policy:
     tools: ToolPolicy
     redaction: RedactionPolicy = field(default_factory=RedactionPolicy)
     skills: SkillPolicy = field(default_factory=SkillPolicy)
+    link: LinkPolicy = field(default_factory=LinkPolicy)
     source: str = "<memory>"
 
     # ── Lookups ───────────────────────────────────────────────────────────────

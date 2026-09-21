@@ -16,6 +16,7 @@ and the old one stays readable.
 | [0003](0003-offline-echo-backend.md) | Ship an offline scripted backend in the product | Accepted |
 | [0004](0004-name-the-project-dogana.md) | Name the project Dogana | Superseded by 0005 |
 | [0005](0005-name-the-project-annona.md) | Name the project Annona | Accepted |
+| [0006](0006-runner-link.md) | Link a runner to Agents Studio: outbound only, its own credential | Accepted |
 
 ## Writing one
 
