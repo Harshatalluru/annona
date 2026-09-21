@@ -66,6 +66,7 @@ __all__ = [
     "enroll",
     "inbox_dir",
     "link_path",
+    "read_inbox",
     "release_ceiling",
     "release_decision",
 ]
@@ -99,6 +100,25 @@ def link_path() -> Path:
 def inbox_dir() -> Path:
     """``$ANNONA_HOME/link/inbox`` — where withheld answers are kept."""
     return policy_path().parent / "link" / "inbox"
+
+
+def read_inbox() -> list[dict[str, Any]]:
+    """The withheld answers kept here, newest first.
+
+    Each record is the file as :func:`_keep` wrote it, plus ``received``: the
+    file's mtime, as a Unix timestamp. A file that is not such a record is skipped
+    rather than failing the whole inbox.
+    """
+    items = []
+    for path in inbox_dir().glob("*.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            received = path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("job_id"):
+            items.append({**record, "received": received})
+    return sorted(items, key=lambda it: it["received"], reverse=True)
 
 
 def check_endpoint(url: str) -> str:

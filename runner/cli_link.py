@@ -8,7 +8,6 @@ the withheld answers, ``show`` prints one. The design is ADR 0006.
 
 from __future__ import annotations
 
-import json
 import signal
 import threading
 
@@ -24,8 +23,8 @@ from runner.link import (
     LinkRevokedError,
     LinkWorker,
     enroll,
-    inbox_dir,
     link_path,
+    read_inbox,
     release_ceiling,
 )
 from runner.policy.loader import load_policy
@@ -191,18 +190,6 @@ def serve_cmd():
         raise typer.Exit(3) from None
 
 
-def _inbox() -> list[dict]:
-    items = []
-    for path in sorted(inbox_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            items.append(
-                {**json.loads(path.read_text(encoding="utf-8")), "_mtime": path.stat().st_mtime}
-            )
-        except (OSError, ValueError):
-            continue
-    return items
-
-
 @link_app.command("inbox")
 def inbox_cmd():
     """Answers Studio did not receive because this machine's policy kept them here."""
@@ -210,7 +197,7 @@ def inbox_cmd():
 
     from rich.table import Table  # noqa: PLC0415
 
-    items = _inbox()
+    items = read_inbox()
     if not items:
         console.print("inbox empty: no withheld answers on this machine")
         return
@@ -220,7 +207,7 @@ def inbox_cmd():
     for it in items:
         table.add_row(
             it["job_id"][:8],
-            datetime.fromtimestamp(it["_mtime"]).strftime("%d %b %H:%M"),
+            datetime.fromtimestamp(it["received"]).strftime("%d %b %H:%M"),
             it.get("title") or it.get("instruction", "")[:40],
             (it.get("requested_by") or {}).get("email", ""),
             it.get("release", ""),
@@ -232,7 +219,7 @@ def inbox_cmd():
 @link_app.command("show")
 def show_cmd(job: str = typer.Argument(..., help="Job id, or its first characters")):
     """Print a withheld answer, with the instruction and why it stayed here."""
-    matches = [it for it in _inbox() if it["job_id"].startswith(job.strip())]
+    matches = [it for it in read_inbox() if it["job_id"].startswith(job.strip())]
     if len(matches) != 1:
         console.print(
             f"❌ [red]{'no' if not matches else 'more than one'} withheld job matches {job!r}[/red]"

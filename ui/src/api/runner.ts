@@ -88,3 +88,35 @@ export interface RunnerMode {
 export const runner = {
   mode: () => req<RunnerMode>("/runner/mode"),
 }
+
+// ── Link inbox ────────────────────────────────────────────────────────────────
+// Answers Agents Studio asked for that this machine's policy kept here. The list
+// says who asked and why the answer stayed; only the detail carries the answer.
+
+export interface InboxItem {
+  job_id: string
+  title: string
+  requested_by: string
+  skill: string | null
+  release: string
+  placement_class: string
+  received: number  // Unix seconds
+}
+
+export interface InboxRecord {
+  job_id: string
+  title: string
+  instruction: string
+  requested_by: { email?: string; role?: string; organization_id?: string }
+  skill?: string | null
+  response: string
+  release: string
+  placement: { class: string; outcome: string; substrate: string }
+  ledger_head: string
+  received: number
+}
+
+export const link = {
+  inbox: () => req<InboxItem[]>("/link/inbox"),
+  get:   (jobId: string) => req<InboxRecord>(`/link/inbox/${encodeURIComponent(jobId)}`),
+}

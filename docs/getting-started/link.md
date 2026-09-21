@@ -56,6 +56,10 @@ annona link inbox          # what stayed here, who asked, why
 annona link show 3f2a9c1e  # the instruction and the answer
 ```
 
+Or open **Inbox** in the app: the same answers, with who asked, why each one
+stayed and, one click in, the instruction and the answer. Only the window on this
+machine can read it; a web app paired with `annona pair` is refused.
+
 Studio shows the same job as **Kept on machine**, with the command to read it.
 
 ### Skills Studio can name

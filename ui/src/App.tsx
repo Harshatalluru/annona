@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { useRunner } from "./hooks/useRunner";
-import { AskIcon, PerimeterIcon, BrainIcon, SyncIcon, TasksIcon, SettingsIcon } from "./components/ui/Icons";
+import { AskIcon, PerimeterIcon, InboxIcon, BrainIcon, SyncIcon, TasksIcon, SettingsIcon } from "./components/ui/Icons";
 import AskView       from "./components/views/AskView";
 import PerimeterView from "./components/views/PerimeterView";
+import InboxView     from "./components/views/InboxView";
 import BrainView    from "./components/views/BrainView";
 import SyncView     from "./components/views/SyncView";
 import TasksView    from "./components/views/TasksView";
@@ -16,7 +17,7 @@ import { kernel as kernelApi } from "./api/kernel";
 import "./App.css";
 import "./css/auth-animations.css";
 
-type View = "ask" | "perimeter" | "brain" | "sync" | "tasks"
+type View = "ask" | "perimeter" | "inbox" | "brain" | "sync" | "tasks"
 
 // The kernel first, the vault second. What somebody installed this for is
 // deciding where their work runs; the notes are what the previous product did.
@@ -28,6 +29,7 @@ type View = "ask" | "perimeter" | "brain" | "sync" | "tasks"
 const NAV: { id: View; label: string; icon: React.FC<{ size?: number }>; section: string }[] = [
   { id: "ask",       label: "Ask",       icon: AskIcon,       section: "Kernel" },
   { id: "perimeter", label: "Perimeter", icon: PerimeterIcon, section: "Kernel" },
+  { id: "inbox",     label: "Inbox",     icon: InboxIcon,     section: "Kernel" },
   { id: "brain",     label: "Notes",     icon: BrainIcon,     section: "Workspace" },
   { id: "sync",      label: "Sync",      icon: SyncIcon,      section: "Workspace" },
   { id: "tasks",     label: "Tasks",     icon: TasksIcon,     section: "Workspace" },
@@ -353,6 +355,7 @@ export default function App() {
           <>
             {view === "ask"       && <AskView />}
             {view === "perimeter" && <PerimeterView />}
+            {view === "inbox"     && <InboxView />}
             {view === "brain"   && <BrainView />}
             {view === "sync"    && <SyncView />}
             {view === "tasks"   && <TasksView />}
