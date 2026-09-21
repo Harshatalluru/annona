@@ -67,7 +67,7 @@ def config() -> LinkConfig:
 def enforced(response: str, klass: str = "internal", sealed: str = ""):
     """A stand-in for reason_and_execute on the enforced path."""
 
-    def run(instruction, cancelled):
+    def run(instruction, cancelled, skill=None):
         return {
             "response": response,
             "placement": {
@@ -227,16 +227,59 @@ def test_a_restricted_run_is_withheld_and_its_answer_never_leaves(policy_file: P
     ]
     assert outcomes == ["received", "withheld"]
 
+    kept = policy_file.parent / "link" / "inbox" / "job-1.json"
+    assert kept.stat().st_mode & 0o777 == 0o600, "the answer stays here, readable by this user only"
+    record = json.loads(kept.read_text(encoding="utf-8"))
+    assert record["response"] == secret_answer
+    assert record["requested_by"]["email"] == "ada@technoprobe.example"
+
+
+def with_skills(policy_file: Path, *names: str) -> Path:
+    doc = yaml.safe_load(policy_file.read_text(encoding="utf-8"))
+    doc["skills"] = list(names)
+    policy_file.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    return policy_file
+
+
+def test_the_heartbeat_offers_enabled_skills_and_allowed_tools_only(policy_file: Path):
+    report = worker(with_skills(policy_file, "second-opinion"), enforced("x")).report()
+    assert [s["name"] for s in report["skills"]] == ["second-opinion"]
+    assert set(report["skills"][0]) == {"name", "description", "pins"}, "never the body"
+    assert report["tools"] == sorted(report["tools"]) and "shell" not in report["tools"]
+
+
+def test_a_named_skill_is_handed_to_the_run_and_reported_back(policy_file: Path):
+    seen = []
+
+    def run(instruction, cancelled, skill=None):
+        seen.append(skill)
+        return enforced("ok")(instruction, cancelled)
+
+    body = worker(with_skills(policy_file, "second-opinion"), run).run_job(
+        {**JOB, "skill": "second-opinion"}
+    )
+    assert seen == ["second-opinion"]
+    assert body["status"] == "completed" and body["skill"] == "second-opinion"
+
+
+def test_a_skill_the_policy_does_not_enable_fails_without_running(policy_file: Path):
+    called = []
+    body = worker(policy_file, lambda i, c, s=None: called.append(i)).run_job(
+        {**JOB, "skill": "second-opinion"}
+    )
+    assert body["status"] == "failed" and "not enabled" in body["error"]
+    assert not called
+
 
 def test_no_policy_means_no_remote_work(tmp_path: Path):
     called = []
-    body = worker(tmp_path / "missing.yaml", lambda i, c: called.append(i)).run_job(JOB)
+    body = worker(tmp_path / "missing.yaml", lambda i, c, s=None: called.append(i)).run_job(JOB)
     assert body["status"] == "failed"
     assert not called, "an instruction from the network must not run without a perimeter"
 
 
 def test_an_unenforced_run_is_never_released(policy_file: Path):
-    body = worker(policy_file, lambda i, c: {"response": "legacy answer"}).run_job(JOB)
+    body = worker(policy_file, lambda i, c, s=None: {"response": "legacy answer"}).run_job(JOB)
     assert body["status"] == "failed"
     assert "response" not in body
 
@@ -282,7 +325,7 @@ def test_a_job_cancelled_in_studio_reports_cancelled(policy_file: Path):
 
     w = worker(policy_file, None, handler)
 
-    def run(instruction, cancelled):
+    def run(instruction, cancelled, skill=None):
         w.beat_once()  # the heartbeat lands mid-run
         assert cancelled()
         return enforced("partial")(instruction, cancelled)

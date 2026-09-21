@@ -17,8 +17,14 @@ to this runner, and report on a job it holds. Nothing else.
 machine, so a job's answer is egress. It is released only when the run's working
 set, its seal and the answer's own text all sit at or below ``link.release`` in
 the policy. Otherwise the job is reported ``withheld``: Studio learns the job
-finished and where it was placed, and the answer stays here. A policy with no
+finished and where it was placed, and the answer stays here — in the inbox,
+``$ANNONA_HOME/link/inbox``, readable with ``annona link show``. A policy with no
 ``link:`` section releases nothing but that metadata.
+
+**Studio names a skill, never writes one.** The heartbeat lists the skills this
+policy enables; a job may name one, and it is loaded before the first turn
+through the same ``skill`` tool a model would call — same permission, same pin,
+same ledger entry. A name the policy does not enable fails the job.
 """
 
 from __future__ import annotations
@@ -45,6 +51,8 @@ from runner.policy.classifier import PolicyClassifier
 from runner.policy.loader import load_policy
 from runner.policy.models import Policy
 from runner.services.enforcement import policy_path
+from runner.skills.loader import discover_skills
+from runner.skills.registry import SkillRegistry
 
 __all__ = [
     "LinkClient",
@@ -55,6 +63,7 @@ __all__ = [
     "LinkWorker",
     "check_endpoint",
     "enroll",
+    "inbox_dir",
     "link_path",
     "release_decision",
 ]
@@ -84,6 +93,11 @@ class LinkConflictError(LinkError):
 def link_path() -> Path:
     """``$ANNONA_HOME/link.json`` — next to the policy it answers to."""
     return policy_path().parent / "link.json"
+
+
+def inbox_dir() -> Path:
+    """``$ANNONA_HOME/link/inbox`` — where withheld answers are kept."""
+    return policy_path().parent / "link" / "inbox"
 
 
 def check_endpoint(url: str) -> str:
@@ -266,8 +280,38 @@ def release_decision(
 
 # ── The worker ───────────────────────────────────────────────────────────────
 
-RunFn = Callable[[str, Callable[[], bool]], Mapping[str, Any]]
-"""``(instruction, cancelled) -> reason_and_execute result``."""
+RunFn = Callable[[str, Callable[[], bool], "str | None"], Mapping[str, Any]]
+"""``(instruction, cancelled, skill) -> reason_and_execute result``."""
+
+
+def usable_skills(policy: Policy) -> tuple[Any, ...]:
+    """Skills this policy enables and this machine can run — what Studio may name."""
+    if not policy.skills.allow:
+        return ()
+    return SkillRegistry(
+        discover_skills(),
+        allowed=policy.skills.allow,
+        vision=any(s.vision for s in policy.substrates),
+        allowed_tools=tuple(policy.tools.allow),
+        context_window=max((s.context_window for s in policy.substrates), default=0),
+    ).available()
+
+
+def _keep(inbox: Path, job: Mapping[str, Any], **fields: Any) -> Path:
+    """Write a withheld answer to the inbox, readable by this user only."""
+    inbox.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = inbox / f"{job['id']}.json"
+    record = {
+        "job_id": str(job["id"]),
+        "title": str(job.get("title") or ""),
+        "instruction": str(job.get("instruction") or ""),
+        "requested_by": dict(job.get("requested_by") or {}),
+        **fields,
+    }
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    return path
 
 
 def _policy_digest(path: Path) -> str:
@@ -344,8 +388,15 @@ class LinkWorker:
     def report(self) -> dict[str, Any]:
         """The heartbeat body: what this runner is, never where its data is."""
         substrates: list[dict[str, Any]] = []
+        skills: list[dict[str, Any]] = []
+        tools: list[str] = []
         try:
             policy = load_policy(self._policy_file)
+            tools = sorted(policy.tools.allow)[:50]
+            skills = [
+                {"name": k.name, "description": k.description[:300], "pins": k.pins}
+                for k in usable_skills(policy)
+            ][:200]
             substrates = [
                 {
                     "id": s.id,
@@ -362,6 +413,8 @@ class LinkWorker:
             "version": self._version,
             "policy_digest": _policy_digest(self._policy_file),
             "substrates": substrates[:50],
+            "skills": skills,
+            "tools": tools,
             "busy": self._current is not None,
             "platform": platform.system().lower(),
         }
@@ -390,18 +443,29 @@ class LinkWorker:
             }
 
         instruction = str(job.get("instruction", ""))[:MAX_INSTRUCTION_CHARS]
+        skill = str(job.get("skill") or "") or None
         classifier = PolicyClassifier(policy)
         self._record(
             "received",
             classifier.classify_text(instruction),
             job,
             title=str(job.get("title", ""))[:200],
+            **({"skill": skill} if skill else {}),
         )
+        if skill and skill not in {k.name for k in usable_skills(policy)}:
+            self._record(
+                "refused", SensitivityClass.PUBLIC, job, reason=f"skill {skill!r} not enabled"
+            )
+            return {
+                **base,
+                "status": "failed",
+                "error": f"skill {skill!r} is not enabled on this machine",
+            }
 
         before = sum(1 for _ in read_entries(self._ledger_file))
         self._current = job_id
         try:
-            result = self._run(instruction, lambda: job_id in self._cancelled)
+            result = self._run(instruction, lambda: job_id in self._cancelled, skill)
         except Exception as exc:  # noqa: BLE001
             logger.exception("link job failed")
             self._record("failed", SensitivityClass.PUBLIC, job, reason=type(exc).__name__)
@@ -441,6 +505,7 @@ class LinkWorker:
             "ledger_head": Ledger(self._ledger_file).head,
             "decisions": _decision_summary(entries, with_reasons=released),
             "release": why,
+            **({"skill": skill} if skill else {}),
         }
         if cancelled:
             self._record("cancelled", run_class, job)
@@ -448,6 +513,15 @@ class LinkWorker:
         if released:
             self._record("released", run_class, job, reason=why)
             return {**body, "status": "completed", "response": response}
+        _keep(
+            self._policy_file.parent / "link" / "inbox",
+            job,
+            skill=skill,
+            response=response,
+            release=why,
+            placement=safe_placement,
+            ledger_head=body["ledger_head"],
+        )
         self._record("withheld", run_class, job, reason=why)
         return {**body, "status": "withheld"}
 

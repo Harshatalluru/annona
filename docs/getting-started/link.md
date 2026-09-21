@@ -27,6 +27,32 @@ A run that reads anything above it — or sealed material, or whose answer itsel
 classifies above it — is reported **withheld**: Studio sees that it finished and
 where it ran; the answer stays here.
 
+### Where a withheld answer goes
+
+Into the inbox on this machine, `$ANNONA_HOME/link/inbox/` (mode `0600`):
+
+```bash
+annona link inbox          # what stayed here, who asked, why
+annona link show 3f2a9c1e  # the instruction and the answer
+```
+
+Studio shows the same job as **Kept on machine**, with the command to read it.
+
+### Skills Studio can name
+
+The heartbeat tells Studio which skills this policy enables (name, description,
+whether it pins the run local) and which tools it allows — never a skill's text.
+A job may name one; it is loaded before the first turn through the same `skill`
+tool a model would call, so the pin and the ledger entry are the same. A name
+the policy does not enable fails the job. To offer more, install and enable:
+
+```bash
+annona skills-install ~/Downloads/pdf
+```
+```yaml
+skills: [document-triage, case-timeline, pdf]
+```
+
 ## 3. Serve, detached
 
 Foreground: `annona link serve`. On a server, as a service:

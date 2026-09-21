@@ -2,11 +2,13 @@
 
 Four commands, because the link has four states a person needs to act on:
 not enrolled (``enroll``), enrolled and idle (``status``), serving (``serve``),
-and done with it (``forget``). The design is ADR 0006.
+and done with it (``forget``). Two more read what stayed here: ``inbox`` lists
+the withheld answers, ``show`` prints one. The design is ADR 0006.
 """
 
 from __future__ import annotations
 
+import json
 import signal
 import threading
 
@@ -22,6 +24,7 @@ from runner.link import (
     LinkRevokedError,
     LinkWorker,
     enroll,
+    inbox_dir,
     link_path,
 )
 from runner.policy.loader import load_policy
@@ -149,12 +152,24 @@ def serve_cmd():
         manager.create_default_config()
     executor = TaskExecutor(manager.load_config())
 
-    def run(instruction, cancelled):
+    from runner.kernel.types import ToolCall  # noqa: PLC0415
+    from runner.skills.registry import SKILL_TOOL  # noqa: PLC0415
+
+    def run(instruction, cancelled, skill=None):
+        # A skill Studio named is loaded before the first turn, through the same
+        # tool and gate a model would use: asking a small model to remember to
+        # load it works most of the time, which is not good enough.
+        prefetch = (
+            (ToolCall(id="studio-skill", name=SKILL_TOOL, arguments={"name": skill}),)
+            if skill
+            else ()
+        )
         return executor.ai_client.reason_and_execute(
             prompt=instruction,
             context={"source": "link", "surface": "agents-studio"},
             tools=executor.tools,
             permissions=executor.permissions,
+            prefetch=prefetch,
             cancel=cancelled,
         )
 
@@ -170,6 +185,66 @@ def serve_cmd():
     except LinkRevokedError as exc:
         console.print(f"⛔ [red]{exc}[/red]")
         raise typer.Exit(3) from None
+
+
+def _inbox() -> list[dict]:
+    items = []
+    for path in sorted(inbox_dir().glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            items.append(
+                {**json.loads(path.read_text(encoding="utf-8")), "_mtime": path.stat().st_mtime}
+            )
+        except (OSError, ValueError):
+            continue
+    return items
+
+
+@link_app.command("inbox")
+def inbox_cmd():
+    """Answers Studio did not receive because this machine's policy kept them here."""
+    from datetime import datetime  # noqa: PLC0415
+
+    from rich.table import Table  # noqa: PLC0415
+
+    items = _inbox()
+    if not items:
+        console.print("inbox empty: no withheld answers on this machine")
+        return
+    table = Table(box=None)
+    for col in ("job", "when", "title", "asked by", "why it stayed"):
+        table.add_column(col)
+    for it in items:
+        table.add_row(
+            it["job_id"][:8],
+            datetime.fromtimestamp(it["_mtime"]).strftime("%d %b %H:%M"),
+            it.get("title") or it.get("instruction", "")[:40],
+            (it.get("requested_by") or {}).get("email", ""),
+            it.get("release", ""),
+        )
+    console.print(table)
+    console.print("\nread one: [bold]annona link show <job>[/bold]")
+
+
+@link_app.command("show")
+def show_cmd(job: str = typer.Argument(..., help="Job id, or its first characters")):
+    """Print a withheld answer, with the instruction and why it stayed here."""
+    matches = [it for it in _inbox() if it["job_id"].startswith(job.strip())]
+    if len(matches) != 1:
+        console.print(
+            f"❌ [red]{'no' if not matches else 'more than one'} withheld job matches {job!r}[/red]"
+        )
+        raise typer.Exit(1)
+    it = matches[0]
+    console.print(
+        f"[bold]{it.get('title') or it['job_id']}[/bold]  ·  {(it.get('requested_by') or {}).get('email', '')}"
+    )
+    if it.get("skill"):
+        console.print(f"skill: {it['skill']}")
+    console.print(f"[dim]kept here: {it.get('release', '')}[/dim]\n")
+    console.print("[bold]instruction[/bold]")
+    console.print(it.get("instruction", ""), markup=False)
+    console.print("\n[bold]answer[/bold]")
+    console.print(it.get("response", ""), markup=False)
 
 
 @link_app.command("forget")
