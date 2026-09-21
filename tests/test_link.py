@@ -416,12 +416,13 @@ def test_an_install_job_fetches_a_pre_approved_skill_without_running_a_model(pol
     body = w.run_job(INSTALL)
 
     index = json.loads((PUBLISHED / "index.json").read_text(encoding="utf-8"))
-    sha = next(s["sha256"] for s in index["skills"] if s["name"] == "rfq-triage")
+    entry = next(s for s in index["skills"] if s["name"] == "rfq-triage")
+    sha, version = entry["sha256"], entry["version"]
     assert not called
     assert body == {
         "lease_id": "lease-1",
         "status": "completed",
-        "response": f"Installed rfq-triage 1 from akaion (sha256 {sha[:12]}…); pinned local; "
+        "response": f"Installed rfq-triage {version} from akaion (sha256 {sha[:12]}…); pinned local; "
         "enabled by skill_catalogs.enable",
         "skill": "rfq-triage",
     }

@@ -1,7 +1,7 @@
 ---
 name: eight-d
 description: Draft an 8D problem-solving report (D0–D8) from complaint emails, test logs and meeting notes, with a source for every fact and containment kept apart from root cause.
-version: 1
+version: 2
 tools: [document_reader, explorer]
 min_context: 16000
 pins: local
@@ -12,6 +12,17 @@ pins: local
 An 8D is read by the customer who complained and by the auditor who comes after
 them. Both check the same thing: that every statement can be traced to a record,
 and that "what we did to stop the bleeding" was never presented as "why it bled".
+
+## Finding the material
+
+List **every** file under the folder you were given, recursively, with no
+filter on type — do not pass a list of extensions to the explorer. Records
+arrive as PDF, Word, spreadsheet, email export, plain text and Markdown, and a
+filter chosen before looking is how a folder full of documents reads as empty.
+Then read each file the reader can open; report the ones it cannot, by name.
+
+Do not stop to ask whether to continue. If nothing readable is there, say
+which files you found and why none could be read — that *is* the answer.
 
 ## Method
 

@@ -1,7 +1,7 @@
 ---
 name: rfq-triage
 description: Turn customer RFQs and test specifications into one row per request with the parameters a quotation needs, and list what is missing before anyone prices it.
-version: 1
+version: 2
 tools: [document_reader, explorer]
 pins: local
 ---
@@ -12,6 +12,17 @@ An RFQ for a probe card, a test socket or a fixture arrives as a mix of email,
 PDF specification, drawing and spreadsheet. The quotation is only as good as the
 parameters lifted out of them, and the costly mistake is a plausible number that
 the customer never wrote.
+
+## Finding the material
+
+List **every** file under the folder you were given, recursively, with no
+filter on type — do not pass a list of extensions to the explorer. Requests
+arrive as PDF, Word, spreadsheet, email export, plain text and Markdown, and a
+filter chosen before looking is how a folder full of documents reads as empty.
+Then read each file the reader can open; report the ones it cannot, by name.
+
+Do not stop to ask whether to continue. If nothing readable is there, say
+which files you found and why none could be read — that *is* the answer.
 
 ## Method
 
