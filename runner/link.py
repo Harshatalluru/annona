@@ -49,6 +49,7 @@ from runner.services.enforcement import policy_path
 __all__ = [
     "LinkClient",
     "LinkConfig",
+    "LinkConflictError",
     "LinkError",
     "LinkRevokedError",
     "LinkWorker",
@@ -71,6 +72,10 @@ class LinkError(RuntimeError):
 
 class LinkRevokedError(LinkError):
     """The control plane no longer accepts this runner's credential."""
+
+
+class LinkConflictError(LinkError):
+    """The control plane refused a state change (409): retrying cannot help."""
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -152,11 +157,12 @@ def _raise_for(response: httpx.Response) -> None:
             "or enrolled elsewhere. Enroll again with a new code."
         )
     if response.status_code >= 400:
+        cls = LinkConflictError if response.status_code == 409 else LinkError
         try:
             detail = response.json().get("detail", response.text)
         except ValueError:
             detail = response.text
-        raise LinkError(
+        raise cls(
             f"{response.request.method} {response.request.url.path}: "
             f"{response.status_code} {detail}"
         )
@@ -177,14 +183,19 @@ def enroll(
         f"{endpoint}{API_PREFIX}/enroll",
         json={"code": code.strip(), "name": name, "machine_id": machine_id(), "version": version},
     )
+    if response.status_code == 401:
+        # Not "revoked": this machine has no credential yet. Unknown, used and
+        # expired codes are one answer on purpose, so this cannot say which.
+        raise LinkError("the enrollment code is invalid, already used, or expired (15 min)")
     _raise_for(response)
     body = response.json()
+    org = body.get("organization") or ""
     return LinkConfig(
         endpoint=endpoint,
         runner_id=str(body["runner_id"]),
         secret=str(body["secret"]),
         name=name,
-        organization=str(body.get("organization", "")),
+        organization=str(org.get("name", "")) if isinstance(org, Mapping) else str(org),
     )
 
 
@@ -194,7 +205,9 @@ class LinkClient:
     def __init__(self, config: LinkConfig, *, client: httpx.Client | None = None) -> None:
         check_endpoint(config.endpoint)
         self._config = config
-        self._http = client or httpx.Client(timeout=30)
+        # 60 s: a result is small, but a control plane under load should get
+        # the time to answer rather than a retry racing the first write.
+        self._http = client or httpx.Client(timeout=60)
         self._headers = {"Authorization": f"Runner {config.runner_id}.{config.secret}"}
 
     def _post(self, path: str, body: Mapping[str, Any] | None = None) -> Any:
@@ -322,7 +335,7 @@ class LinkWorker:
             detail={
                 "job_id": str(job.get("id", "")),
                 "requested_by": {
-                    k: requested_by.get(k, "") for k in ("email", "role", "organization")
+                    k: requested_by.get(k, "") for k in ("email", "role", "organization_id")
                 },
                 **detail,
             },
@@ -484,6 +497,12 @@ class LinkWorker:
                 except LinkRevokedError:
                     stop.set()
                     raise
+                except LinkConflictError as exc:
+                    # The control plane has an outcome for this job that is
+                    # not this one (lease expired, cancelled, revoked). The
+                    # run stays in the local ledger either way.
+                    logger.error(f"link result refused: {exc}")
+                    break
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"link result not delivered ({exc}); attempt {attempt + 1}/5")
                     stop.wait(min(2**attempt, 30))

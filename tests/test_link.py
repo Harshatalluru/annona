@@ -41,7 +41,7 @@ JOB = {
     "requested_by": {
         "email": "ada@technoprobe.example",
         "role": "member",
-        "organization": "Technoprobe",
+        "organization_id": "o-1",
     },
 }
 
@@ -122,7 +122,12 @@ def test_enrollment_trades_a_code_for_the_runners_own_credential():
         seen["auth"] = request.headers.get("authorization")
         seen["body"] = json.loads(request.content)
         return httpx.Response(
-            200, json={"runner_id": "r-9", "secret": "fresh", "organization": "Technoprobe"}
+            200,
+            json={
+                "runner_id": "r-9",
+                "secret": "fresh",
+                "organization": {"id": "o-1", "name": "Technoprobe"},
+            },
         )
 
     cfg = enroll(
@@ -310,3 +315,30 @@ def test_enroll_adds_link_release_keeping_the_operators_comments(tmp_path, monke
     text = path.read_text()
     assert text.startswith("# mine, keep me")
     assert _ensure_link_section("public") == "internal", "an existing ceiling is never overwritten"
+
+
+def test_a_bad_enrollment_code_is_not_reported_as_a_revocation():
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+    with pytest.raises(LinkError, match="enrollment code") as info:
+        enroll(ENDPOINT, "ann_enr_wrong", "dgx1", version="0.1.0", client=client)
+    assert not isinstance(info.value, LinkRevokedError)
+
+
+def test_a_refused_result_is_not_retried(policy_file: Path):
+    posts = []
+    claims = iter([{"job": JOB}])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/claim"):
+            try:
+                return httpx.Response(200, json=next(claims))
+            except StopIteration:
+                return httpx.Response(401)
+        if request.url.path.endswith("/result"):
+            posts.append(1)
+            return httpx.Response(409, json={"detail": "No live lease on this job"})
+        return httpx.Response(200, json={"cancel": []})
+
+    with pytest.raises(LinkRevokedError):
+        worker(policy_file, enforced("ok"), handler).serve(threading.Event())
+    assert len(posts) == 1, "a 409 is final; retrying it only adds noise"
