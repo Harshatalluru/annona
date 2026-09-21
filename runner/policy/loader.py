@@ -23,6 +23,7 @@ from runner.kernel.types import SensitivityClass
 from runner.policy.models import (
     ClassSpec,
     EgressPolicy,
+    LinkPolicy,
     Policy,
     Rule,
     SealedSpec,
@@ -238,6 +239,16 @@ def _parse_skills(raw: Any) -> SkillPolicy:
     return SkillPolicy(allow=tuple(str(name) for name in _require_sequence(raw, "skills")))
 
 
+def _parse_link(raw: Mapping[str, Any]) -> LinkPolicy:
+    """Parse the ``link:`` section — the ceiling on what goes back to Studio."""
+    if not raw or raw.get("release") is None:
+        return LinkPolicy()
+    try:
+        return LinkPolicy(release=SensitivityClass.parse(raw["release"]))
+    except ValueError as exc:
+        raise PolicyError(f"link.release: {exc}") from exc
+
+
 def _parse_redaction(raw: Mapping[str, Any]) -> RedactionPolicy:
     """Parse the ``redaction:`` section.
 
@@ -341,6 +352,7 @@ def parse_policy(document: Mapping[str, Any], *, source: str = "<memory>") -> Po
         tools=tools,
         redaction=redaction,
         skills=skills,
+        link=_parse_link(_require_mapping(document.get("link"), "link")),
         source=source,
     )
 

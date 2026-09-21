@@ -78,6 +78,22 @@ PROVIDERS = {
             model=os.getenv("ANNONA_LIVE_OPENAI_MODEL", "gpt-4o-mini"),
         ),
     ),
+    # Google Vertex, credentialled by the machine's ADC rather than a key:
+    # ANNONA_LIVE_VERTEX_PROJECT=my-project, region via ANNONA_LIVE_VERTEX_REGION.
+    "vertex": (
+        "ANNONA_LIVE_VERTEX_PROJECT",
+        substrate(
+            kind="vertex",
+            jurisdiction="eu",
+            endpoint=(
+                "https://{r}-aiplatform.googleapis.com/v1/projects/{p}/locations/{r}".format(
+                    r=os.getenv("ANNONA_LIVE_VERTEX_REGION", "europe-west1"),
+                    p=os.getenv("ANNONA_LIVE_VERTEX_PROJECT", ""),
+                )
+            ),
+            model=os.getenv("ANNONA_LIVE_VERTEX_MODEL", "google/gemini-2.5-flash"),
+        ),
+    ),
     # Whatever the operator points it at, for the provider this file does not
     # know about yet.
     "custom": (

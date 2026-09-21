@@ -16,6 +16,7 @@ means :class:`~runner.capability.backends.openai_compatible.OpenAICompatibleBack
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,12 +144,49 @@ def build_backend(substrate: Substrate, *, secrets: Mapping[str, str] | None = N
             model=substrate.model or "claude-opus-5",
         )
 
+    if kind == "vertex":
+        # One endpoint names both the project and the region the data is
+        # processed in, e.g.
+        #   https://europe-west1-aiplatform.googleapis.com/v1/projects/P/locations/europe-west1
+        # so the jurisdiction an operator declares can be checked against the
+        # URL they actually pointed at, rather than living in two places.
+        match = re.search(r"/projects/([^/]+)/locations/([^/]+)", substrate.endpoint)
+        if not match or not substrate.model:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (vertex) needs a model and an endpoint "
+                "of the form https://<region>-aiplatform.googleapis.com/v1/projects/<p>/locations/<region>"
+            )
+        project, region = match.groups()
+        if substrate.model.startswith("claude"):
+            from anthropic import AnthropicVertex  # noqa: PLC0415
+
+            return AnthropicBackend(
+                client=AnthropicVertex(project_id=project, region=region), model=substrate.model
+            )
+        # Gemini through Vertex's OpenAI-compatible surface. Credentials are the
+        # machine's Application Default Credentials, never a key in the policy.
+        # ponytail: token fetched once per run (backends are built per run);
+        # a single run longer than the token's hour would need a refreshing client.
+        import google.auth  # noqa: PLC0415
+        from google.auth.transport.requests import Request  # noqa: PLC0415
+
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        creds.refresh(Request())
+        return OpenAICompatibleBackend(
+            model=substrate.model,
+            endpoint=substrate.endpoint.rstrip("/") + "/endpoints/openapi",
+            api_key=creds.token,
+            context_window=substrate.context_window or 1_000_000,
+            is_local=False,
+            name=f"vertex:{substrate.id}",
+        )
+
     if kind == "echo":
         return EchoBackend()
 
     raise ConfigurationError(
         f"substrate {substrate.id!r} declares unknown kind {substrate.kind!r}; "
-        "supported: ollama, openai-compatible, anthropic, echo"
+        "supported: ollama, openai-compatible, anthropic, vertex, echo"
     )
 
 
