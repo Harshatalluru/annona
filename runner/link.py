@@ -499,6 +499,16 @@ class LinkWorker:
         )
 
         safe_placement = {k: placement.get(k, "") for k in ("class", "outcome", "substrate")}
+        # Reported only if the ledger shows it loaded: a requested skill the gate
+        # held did not shape this answer, and saying otherwise would be a lie.
+        if skill and not any(
+            e.kind == "skill"
+            and e.outcome == "cleared"
+            and isinstance(e.detail, Mapping)
+            and e.detail.get("skill") == skill
+            for e in entries
+        ):
+            skill = None
         body: dict[str, Any] = {
             **base,
             "placement": safe_placement,

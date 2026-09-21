@@ -63,7 +63,14 @@ class SkillRegistry:
         return name in self._allowed
 
     def available(self) -> tuple[Skill, ...]:
-        """Skills that are permitted *and* runnable here, in name order."""
+        """Skills that are permitted *and* runnable here, in name order.
+
+        None when the policy does not allow the ``skill`` tool itself: the gate
+        would refuse every load, so offering skills would only promise work
+        that cannot happen.
+        """
+        if SKILL_TOOL_NAME not in self._allowed_tools:
+            return ()
         usable = []
         for name in sorted(self._skills):
             if name not in self._allowed:
@@ -82,6 +89,9 @@ class SkillRegistry:
 
     def unusable(self) -> tuple[tuple[str, str], ...]:
         """Permitted skills this deployment cannot run, and why — for `status`."""
+        if SKILL_TOOL_NAME not in self._allowed_tools:
+            reason = "the policy does not allow the `skill` tool (tools.allow.skill)"
+            return tuple((name, reason) for name in sorted(self._skills) if name in self._allowed)
         blocked = []
         for name in sorted(self._skills):
             if name not in self._allowed:

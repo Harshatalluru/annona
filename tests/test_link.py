@@ -16,7 +16,7 @@ import httpx
 import pytest
 import yaml
 
-from runner.audit.ledger import read_entries, verify_file
+from runner.audit.ledger import Ledger, read_entries, verify_file
 from runner.kernel.types import SensitivityClass
 from runner.link import (
     API_PREFIX,
@@ -237,6 +237,7 @@ def test_a_restricted_run_is_withheld_and_its_answer_never_leaves(policy_file: P
 def with_skills(policy_file: Path, *names: str) -> Path:
     doc = yaml.safe_load(policy_file.read_text(encoding="utf-8"))
     doc["skills"] = list(names)
+    doc.setdefault("tools", {}).setdefault("allow", {})["skill"] = ["/**"]
     policy_file.write_text(yaml.safe_dump(doc), encoding="utf-8")
     return policy_file
 
@@ -259,7 +260,30 @@ def test_a_named_skill_is_handed_to_the_run_and_reported_back(policy_file: Path)
         {**JOB, "skill": "second-opinion"}
     )
     assert seen == ["second-opinion"]
-    assert body["status"] == "completed" and body["skill"] == "second-opinion"
+    assert body["status"] == "completed"
+    assert "skill" not in body, "the fake run never loaded it, so it is not reported"
+
+    def loads(instruction, cancelled, skill=None):
+        Ledger(policy_file.parent / "ledger.jsonl").record(
+            "skill",
+            outcome="cleared",
+            klass=SensitivityClass.PUBLIC,
+            substrate="local",
+            detail={"skill": skill},
+        )
+        return enforced("ok")(instruction, cancelled)
+
+    body = worker(policy_file, loads).run_job({**JOB, "id": "job-2", "skill": "second-opinion"})
+    assert body["skill"] == "second-opinion"
+
+
+def test_skills_are_not_offered_when_the_skill_tool_is_not_allowed(policy_file: Path):
+    doc = yaml.safe_load(policy_file.read_text(encoding="utf-8"))
+    doc["skills"] = ["second-opinion"]
+    policy_file.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert (
+        worker(policy_file, enforced("x")).report()["skills"] == []
+    ), "the gate would refuse every load; offering the skill promises work that cannot happen"
 
 
 def test_a_skill_the_policy_does_not_enable_fails_without_running(policy_file: Path):
