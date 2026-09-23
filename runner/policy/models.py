@@ -373,6 +373,11 @@ class MemoryPolicy:
     model: str = "bge-m3"
     prefetch: bool = False
     top_k: int = 6
+    entities: bool = False
+    company: str = ""
+    """This company's own name, so the graph writes it instead of "noi"/"we"."""
+    """Build the graph of who is whose partner, customer or bound by what, with
+    the ``embed_with`` substrate's chat model, at indexing time."""
 
     @property
     def active(self) -> bool:

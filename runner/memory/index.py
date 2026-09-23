@@ -19,6 +19,7 @@ material to change class.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -31,10 +32,20 @@ from typing import Any
 import httpx
 import numpy as np
 
-__all__ = ["Hit", "MemoryIndex", "default_index_path", "ollama_embedder", "chunk"]
+__all__ = [
+    "Fact",
+    "Hit",
+    "MemoryIndex",
+    "chunk",
+    "default_index_path",
+    "ollama_embedder",
+    "ollama_fact_extractor",
+]
 
 Embedder = Callable[[Sequence[str]], list[list[float]]]
 Reader = Callable[[Path], str]
+FactExtractor = Callable[[str], list[dict[str, str]]]
+"""Relations stated in one document: ``subject``, ``relation``, ``object``, ``evidence``."""
 """Text of one file. Passed in by the caller (the CLI uses the runner's extractors),
 so the index depends on no tool and can be imported by one."""
 
@@ -73,6 +84,97 @@ def ollama_embedder(endpoint: str, model: str, timeout: float = 120.0) -> Embedd
         return response.json()["embeddings"]
 
     return embed
+
+
+RELATIONS = (
+    "partner_of",
+    "customer_of",
+    "supplier_of",
+    "competitor_of",
+    "joint_venture_with",
+    "works_for",
+    "bound_by",
+    "requires",
+    "worth",
+)
+"""The vocabulary of the memory graph. Small on purpose: a conflict check needs
+to follow who works with whom and what binds us, not to model the world."""
+
+_FACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "relation": {"type": "string", "enum": list(RELATIONS)},
+                    "object": {"type": "string"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["subject", "relation", "object", "evidence"],
+            },
+        }
+    },
+    "required": ["facts"],
+}
+
+_FACT_PROMPT = """Extract the business relationships stated in the document below.
+Only what the text states explicitly; never infer. Relations:
+- partner_of: two organisations work together commercially (partnership, joint platform)
+- customer_of: A buys from B ("Veloce is our customer" -> Veloce customer_of <our company>)
+- supplier_of, competitor_of, joint_venture_with, works_for (person -> organisation)
+- bound_by: an organisation is bound by a contract, NDA or clause (object = the contract or clause)
+- requires: a contract or clause requires an action (object = the action, short)
+- worth: a customer's value to us (object = the figure, e.g. "38% del fatturato 2025")
+Use full names as written (e.g. "Nordika Mobility GmbH"). "Noi"/"we" is the company
+writing the document. evidence = the exact sentence, at most 200 characters.
+
+DOCUMENT:
+"""
+
+
+def ollama_fact_extractor(
+    endpoint: str, model: str, company: str = "", timeout: float = 300.0
+) -> FactExtractor:
+    """Relations extracted by a local model, constrained to a JSON schema."""
+    url = endpoint.rstrip("/") + "/api/chat"
+    # Without the company's own name the model writes "Noi" in one document and
+    # the legal name in the next, and the graph splits one node in two.
+    us = (
+        f"The company that owns these documents is {company}: write it by that name, "
+        'never "noi", "we" or "our company".\n'
+        if company
+        else ""
+    )
+
+    def extract(text: str) -> list[dict[str, str]]:
+        response = httpx.post(
+            url,
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": us + _FACT_PROMPT + text[:8000]}],
+                "format": _FACT_SCHEMA,
+                "stream": False,
+                "options": {"temperature": 0},
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        data = json.loads(response.json()["message"]["content"])
+        return [f for f in data.get("facts", []) if f.get("relation") in RELATIONS]
+
+    return extract
+
+
+_SUFFIXES = re.compile(r"\b(s\.?p\.?a\.?|s\.?r\.?l\.?|gmbh|b\.?v\.?|inc\.?|ltd\.?|ag)\s*$", re.I)
+
+
+def entity_key(name: str) -> str:
+    """One key per organisation however it is written: case and legal form dropped."""
+    core = _SUFFIXES.sub("", name.strip()).strip(" .,")
+    return re.sub(r"\s+", " ", core).lower()
 
 
 def chunk(text: str, size: int = CHUNK_CHARS, overlap: int = OVERLAP_CHARS) -> list[str]:
@@ -114,6 +216,20 @@ class Hit:
     path: str
     text: str
     score: float
+
+
+@dataclass(frozen=True)
+class Fact:
+    """One relation from the memory graph, with the sentence and file that state it."""
+
+    subject: str
+    relation: str
+    object: str
+    evidence: str
+    path: str
+
+    def line(self) -> str:
+        return f"{self.subject} — {self.relation} → {self.object}"
 
 
 def _files(folders: Iterable[str]) -> list[Path]:
@@ -160,6 +276,11 @@ class MemoryIndex:
                 id INTEGER PRIMARY KEY, path TEXT, ord INTEGER, text TEXT, vec BLOB);
             CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(text);
+            CREATE TABLE IF NOT EXISTS facts (
+                id INTEGER PRIMARY KEY, path TEXT, subject TEXT, subject_key TEXT,
+                relation TEXT, object TEXT, object_key TEXT, evidence TEXT);
+            CREATE INDEX IF NOT EXISTS facts_subject ON facts(subject_key);
+            CREATE INDEX IF NOT EXISTS facts_object ON facts(object_key);
             """
         )
         # numpy's stubs do not resolve under this project's mypy target; the
@@ -181,9 +302,11 @@ class MemoryIndex:
     def stats(self) -> dict[str, object]:
         docs = self._db.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
         chunks = self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        facts = self._db.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
         return {
             "documents": docs,
             "chunks": chunks,
+            "facts": facts,
             "model": self.meta("model"),
             "path": str(self.path),
         }
@@ -198,6 +321,7 @@ class MemoryIndex:
         *,
         model: str,
         endpoint: str,
+        facts: FactExtractor | None = None,
         on_file: Callable[[Path, int], None] | None = None,
     ) -> dict[str, int]:
         """Bring the index in line with the folders. Unchanged files are skipped.
@@ -206,9 +330,16 @@ class MemoryIndex:
         model change rebuilds from scratch rather than mixing two spaces.
         """
         if self.meta("model") and self.meta("model") != model:
-            self._db.executescript("DELETE FROM docs; DELETE FROM chunks; DELETE FROM chunks_fts;")
+            self._db.executescript(
+                "DELETE FROM docs; DELETE FROM chunks; DELETE FROM chunks_fts; DELETE FROM facts;"
+            )
         self._set_meta("model", model)
         self._set_meta("endpoint", endpoint)
+        # Turning the graph on for an existing index must read every file once:
+        # "unchanged" is about the bytes, and the relations were never extracted.
+        if facts is not None and self.meta("facts") != "1":
+            self._db.execute("DELETE FROM docs")
+        self._set_meta("facts", "1" if facts is not None else "0")
 
         files = _files(folders)
         present = {str(p) for p in files}
@@ -228,7 +359,8 @@ class MemoryIndex:
                 skipped += 1
                 continue
             self._forget(str(path))
-            pieces = chunk(read(path))
+            text = read(path)
+            pieces = chunk(text)
             vectors = embed(pieces) if pieces else []
             for order, (text, vector) in enumerate(zip(pieces, vectors, strict=True)):
                 array: Any = np.asarray(vector, dtype=np.float32)
@@ -239,6 +371,20 @@ class MemoryIndex:
                 )
                 self._db.execute(
                     "INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)", (cur.lastrowid, text)
+                )
+            for fact in facts(text) if facts and text.strip() else []:
+                self._db.execute(
+                    "INSERT INTO facts (path, subject, subject_key, relation, object, object_key, evidence)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        str(path),
+                        fact["subject"],
+                        entity_key(fact["subject"]),
+                        fact["relation"],
+                        fact["object"],
+                        entity_key(fact["object"]),
+                        fact.get("evidence", "")[:300],
+                    ),
                 )
             self._db.execute("INSERT INTO docs VALUES (?, ?, ?)", (str(path), digest, time.time()))
             self._db.commit()
@@ -254,6 +400,7 @@ class MemoryIndex:
         ids = [r[0] for r in self._db.execute("SELECT id FROM chunks WHERE path = ?", (path,))]
         self._db.executemany("DELETE FROM chunks_fts WHERE rowid = ?", [(i,) for i in ids])
         self._db.execute("DELETE FROM chunks WHERE path = ?", (path,))
+        self._db.execute("DELETE FROM facts WHERE path = ?", (path,))
         self._db.execute("DELETE FROM docs WHERE path = ?", (path,))
 
     # ── Search ───────────────────────────────────────────────────────────────
@@ -322,3 +469,40 @@ class MemoryIndex:
             ).fetchone()
             hits.append(Hit(path=path, text=text, score=round(scores[cid], 5)))
         return hits
+
+    # ── Graph ────────────────────────────────────────────────────────────────
+
+    def facts_about(self, query: str, hops: int = 2, limit: int = 12) -> list[Fact]:
+        """Relations reachable from the organisations the query names, ``hops`` deep.
+
+        A conflict is usually two hops away and never in the request: Nordika →
+        partner of → Veloce → bound by → NDA 7.3. Following edges answers that
+        deterministically, where top-k passages might rank the NDA out.
+        """
+        keys = [
+            r[0]
+            for r in self._db.execute(
+                "SELECT DISTINCT subject_key FROM facts UNION SELECT DISTINCT object_key FROM facts"
+            )
+        ]
+        text = query.lower()
+        words = set(re.findall(r"[\w-]{4,}", text))
+        frontier = {k for k in keys if k and (k in text or k.split()[0] in words)}
+        seen_facts: dict[int, Fact] = {}
+        visited: set[str] = set()
+        for _ in range(hops):
+            if not frontier:
+                break
+            marks = ",".join("?" * len(frontier))
+            rows = self._db.execute(
+                f"SELECT id, subject, relation, object, evidence, path, subject_key, object_key FROM facts "  # noqa: S608 - placeholders only
+                f"WHERE subject_key IN ({marks}) OR object_key IN ({marks})",
+                (*frontier, *frontier),
+            ).fetchall()
+            visited |= frontier
+            nxt: set[str] = set()
+            for fid, subj, rel, obj, ev, path, sk, ok in rows:
+                seen_facts.setdefault(fid, Fact(subj, rel, obj, ev, path))
+                nxt |= {sk, ok}
+            frontier = nxt - visited
+        return list(seen_facts.values())[:limit]

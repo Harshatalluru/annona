@@ -16,6 +16,9 @@ not.
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Mapping
+
 from runner.audit.ledger import Ledger
 from runner.kernel.types import SensitivityClass, ToolCall, ToolResult, ToolSpec
 from runner.policy.classifier import PolicyClassifier, WorkingSet
@@ -62,5 +65,23 @@ class TrackingExecutor:
                         "reason": f"result raised the working set to {after.label}",
                     },
                 )
+
+        # A tool that answers from a corpus (the company's memory) declares which
+        # files it drew on. Recorded, not the passages: the ledger stores what was
+        # decided and why, and a second copy of the memory would outlive it.
+        sources = result.content.get("sources") if isinstance(result.content, Mapping) else None
+        if sources and self._ledger is not None:
+            query = str(call.arguments.get("query", ""))
+            self._ledger.record(
+                "retrieval",
+                outcome="cleared",
+                klass=self._working_set.klass,
+                substrate="local",
+                detail={
+                    "tool": call.name,
+                    "paths": [str(s) for s in list(sources)[:50]],
+                    "query_sha256": hashlib.sha256(query.encode()).hexdigest(),
+                },
+            )
 
         return result

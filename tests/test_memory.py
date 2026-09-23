@@ -19,11 +19,15 @@ import re
 import numpy as np
 from datapizza.tools import Tool
 
+from runner.audit.ledger import Ledger, read_entries
 from runner.kernel.blocks import ToolResultBlock, block_text
-from runner.kernel.types import Completion, ToolCall
+from runner.kernel.types import Completion, SensitivityClass, ToolCall, ToolResult
 from runner.memory import MemoryIndex
 from runner.memory.index import chunk
-from tests.test_enforcement import CANARY, ScriptedSubstrate, build
+from runner.policy.classifier import PolicyClassifier, WorkingSet
+from runner.policy.loader import parse_policy
+from runner.policy.tracking import TrackingExecutor
+from tests.test_enforcement import CANARY, ScriptedSubstrate, build, policy_document
 
 # ── A deterministic embedder: bag of words over a fixed vocabulary ───────────
 
@@ -157,3 +161,79 @@ def test_a_restricted_path_named_in_a_tool_result_keeps_the_next_turn_local(tmp_
     frontier, local = run_with_result(tmp_path, f"fonte: {source}\nNordika è partner di Veloce.")
     assert frontier.calls == 1, "the first turn was public; the second must not be"
     assert local.calls == 1
+
+
+# ── The graph: who is whose partner ──────────────────────────────────────────
+
+
+def fake_facts(text):
+    """What a local model would extract from the two memory files."""
+    facts = []
+    if "Nordika" in text:
+        facts.append(
+            {
+                "subject": "Nordika Mobility GmbH",
+                "relation": "partner_of",
+                "object": "Veloce Automotive S.p.A.",
+                "evidence": "Nordika è partner diretto sulla piattaforma.",
+            }
+        )
+    if "Clausola 7.3" in text:
+        facts.append(
+            {
+                "subject": "Veloce Automotive",
+                "relation": "bound_by",
+                "object": "NDA VA-2019-07 clausola 7.3",
+                "evidence": "Clausola 7.3 dell'NDA: avvisare prima.",
+            }
+        )
+    return facts
+
+
+def test_the_conflict_is_two_hops_from_the_name_in_the_request(tmp_path):
+    folder = tmp_path / "Memoria"
+    folder.mkdir()
+    (folder / "verbale.md").write_text(
+        "Nordika è partner diretto sulla piattaforma.\n\nClausola 7.3 dell'NDA: avvisare prima.",
+        encoding="utf-8",
+    )
+    index = MemoryIndex(tmp_path / "index.sqlite")
+    index.build(
+        [f"{folder}/**"], fake_embed, read_text, model="fake", endpoint="-", facts=fake_facts
+    )
+
+    lines = [f.line() for f in index.facts_about("Bozza di contratto per Nordika Mobility")]
+
+    assert "Nordika Mobility GmbH — partner_of → Veloce Automotive S.p.A." in lines
+    # Second hop: the request never names Veloce or the NDA.
+    assert "Veloce Automotive — bound_by → NDA VA-2019-07 clausola 7.3" in lines
+    assert index.facts_about("cos'è una probe card") == []
+
+
+# ── The ledger records what the memory contributed ───────────────────────────
+
+
+def test_a_retrieval_is_recorded_with_its_files_not_its_passages(tmp_path):
+    class Memory:
+        def specs(self):
+            return ()
+
+        def invoke(self, call):
+            return ToolResult(
+                call_id=call.id,
+                name=call.name,
+                content={"results": [{"text": "segreto"}], "sources": ["/m/verbale.docx"]},
+            )
+
+    ledger = Ledger(tmp_path / "ledger.jsonl", run_id="t", fsync=False)
+    policy = parse_policy(policy_document(tmp_path))
+    tracking = TrackingExecutor(
+        Memory(), PolicyClassifier(policy), WorkingSet(SensitivityClass.PUBLIC), ledger
+    )
+
+    tracking.invoke(ToolCall(id="m1", name="memory_search", arguments={"query": "Nordika"}))
+
+    entries = [e for e in read_entries(tmp_path / "ledger.jsonl") if e.kind == "retrieval"]
+    assert len(entries) == 1
+    assert entries[0].detail["paths"] == ["/m/verbale.docx"]
+    assert "segreto" not in (tmp_path / "ledger.jsonl").read_text()

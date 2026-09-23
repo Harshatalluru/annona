@@ -327,6 +327,8 @@ def _parse_memory(raw: Mapping[str, Any]) -> MemoryPolicy:
         model=str(raw.get("model", "bge-m3")),
         prefetch=bool(raw.get("prefetch", False)),
         top_k=top_k,
+        entities=bool(raw.get("entities", False)),
+        company=str(raw.get("company", "")),
     )
 
 

@@ -125,6 +125,8 @@ memory:
   embed_with: local-gpu
   model: bge-m3
   prefetch: true
+  entities: true     # la mappa di chi è partner di chi, estratta da local-gpu
+  company: Meccatronica Lariana S.r.l.
   top_k: 6
 
 skills: [rfq-triage, conflict-check]

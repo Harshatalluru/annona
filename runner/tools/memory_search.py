@@ -62,10 +62,16 @@ class MemorySearchTool(Tool):
         try:
             embed = ollama_embedder(index.meta("endpoint"), index.meta("model"))
             hits = index.search(query, embed, k=max(1, min(int(top_k), 20)), strict=bool(strict))
+            facts = index.facts_about(query)
         finally:
             index.close()
         return {
             "success": True,
             "query": query,
+            # Relations first: they are the answer to "is there a conflict?", the
+            # passages are the evidence to read.
+            "facts": [{"fact": f.line(), "evidence": f.evidence, "source": f.path} for f in facts],
             "results": [{"source": h.path, "text": h.text, "score": h.score} for h in hits],
+            # Declared for the ledger: which files this answer drew on.
+            "sources": sorted({h.path for h in hits} | {f.path for f in facts}),
         }

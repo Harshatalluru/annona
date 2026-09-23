@@ -149,8 +149,13 @@ class PolicyClassifier:
         return max(klass, self.classify_content(rendered))
 
     def classify_result(self, result: ToolResult) -> SensitivityClass:
-        """Class of what a call brought back into the transcript."""
-        return self.classify_content(_render(result.content))
+        """Class of what a call brought back into the transcript.
+
+        Content *and* the paths it names, like the router's view of a payload: a
+        retrieved passage names the file it came from, and that file's class is
+        the passage's class from the moment it arrives, not a turn later.
+        """
+        return self.classify_text(_render(result.content))
 
 
 def _render(content: Any, *, limit: int = 200_000) -> str:

@@ -1,8 +1,19 @@
 # Memoria storica — a sovereign retrieval layer (proposal)
 
-Status: steps 1–2 implemented on 2026-09-23 (`runner/memory`, `memory_search`,
-`annona memory index|search|status`, prefetch before the first turn). Steps 3–5
-are still a proposal.
+Status: steps 1–3 implemented on 2026-09-23 — `runner/memory`, `memory_search`,
+`annona memory index|search|status`, prefetch before the first turn, the entity
+graph (`memory.entities`, two-hop `facts_about`), a `retrieval` ledger entry
+(source paths and query digest, never passages) and the "Retrieved from memory"
+panel in Ask. Steps 4–5 (Qdrant/Docling/reranker extras, eval) are still a
+proposal.
+
+Graph quality, measured on the Orione fixtures with qwen2.5:14b: the relations
+that make the Nordika conflict (Veloce partner_of Nordika, Veloce customer_of us,
+Veloce bound_by clause 7.3) are extracted; so are a few wrong or odd ones
+("Nordika bound_by un solo contatto a una fiera"). Every relation carries the
+sentence it came from, which the UI shows on hover: the graph points a person
+at the evidence, it is not the evidence. `memory.company` names the company so
+the model does not split it into "noi" and its legal name.
 
 What shipped differs from the plan in three deliberate ways:
 

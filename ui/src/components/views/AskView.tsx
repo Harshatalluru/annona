@@ -10,6 +10,7 @@ import {
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { AttachmentCard } from "../attachments/AttachmentCard"
+import { MemoryPanel } from "../memory/MemoryPanel"
 import { FormatsPopover } from "../attachments/FormatsPopover"
 import Working from "./Working"
 import { EgressPanel } from "../egress/EgressPanel"
@@ -155,6 +156,10 @@ function Answer({ x }: { x: Exchange }) {
           </button>
         )}
       </div>
+
+      {/* What the company's memory contributed: the reason a run was sealed or
+          a draft refused is usually here, not in the prompt. */}
+      <MemoryPanel calls={r.tool_calls} />
 
       {/* Above the decisions, not inside them: what crossed is the fact an
           operator most needs and least expects to be shown. */}

@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from runner.memory import MemoryIndex, default_index_path
-from runner.memory.index import ollama_embedder
+from runner.memory.index import ollama_embedder, ollama_fact_extractor
 from runner.policy.loader import load_policy
 from runner.services.enforcement import policy_path
 from runner.tools.extractors.registry import extract
@@ -50,6 +50,11 @@ def index_cmd() -> None:
             lambda path: extract(path).text,
             model=memory.model,
             endpoint=endpoint,
+            # The graph is extracted by the same local substrate's chat model:
+            # the one the loader already checked can hold the folders' class.
+            facts=ollama_fact_extractor(endpoint, embedder.model, memory.company)
+            if memory.entities
+            else None,
             on_file=lambda path, n: console.print(
                 f"  [green]+[/green] {path.name}  [dim]{n} passages[/dim]"
             ),
@@ -59,7 +64,7 @@ def index_cmd() -> None:
         index.close()
     console.print(
         f"\n✅ {result['indexed']} indexed · {result['unchanged']} unchanged · {result['removed']} removed"
-        f"  —  {stats['documents']} documents, {stats['chunks']} passages, embedded by "
+        f"  —  {stats['documents']} documents, {stats['chunks']} passages, {stats['facts']} relations, embedded by "
         f"{memory.model} on {embedder.id} ({embedder.jurisdiction})"
     )
     console.print(f"   {stats['path']}")
@@ -79,6 +84,13 @@ def search_cmd(query: str, k: int = typer.Option(6, "--k", help="Passages to sho
         )
     finally:
         index.close()
+    index = MemoryIndex(path)
+    try:
+        facts = index.facts_about(query)
+    finally:
+        index.close()
+    for fact in facts:
+        console.print(f"  [cyan]{fact.line()}[/cyan]  [dim]{fact.path.rsplit('/', 1)[-1]}[/dim]")
     table = Table(show_lines=True)
     table.add_column("#", width=3)
     table.add_column("source")

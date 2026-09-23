@@ -62,6 +62,8 @@ function phrase(latest: Decision | undefined): string {
     case "inference":
       if (latest.outcome === "held") return "Held"
       return latest.substrate ? `Thinking on ${latest.substrate}` : "Thinking"
+    case "retrieval":
+      return "Recalling from memory"
     case "brief":
       return "Writing a brief"
     case "egress":
@@ -89,6 +91,7 @@ function Step({ entry }: { entry: Decision }) {
   if (entry.kind === "tool_call") what = tool ?? "tool"
   if (entry.kind === "inference") what = entry.substrate || "inference"
   if (entry.kind === "taint") what = "class raised"
+  if (entry.kind === "retrieval") what = "memory"
 
   return (
     <div className="an-working__step">
