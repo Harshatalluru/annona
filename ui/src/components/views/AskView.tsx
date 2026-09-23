@@ -7,6 +7,8 @@ import {
   FormatSupport,
   KernelError,
 } from "../../api/kernel"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { AttachmentCard } from "../attachments/AttachmentCard"
 import { FormatsPopover } from "../attachments/FormatsPopover"
 import Working from "./Working"
@@ -112,7 +114,12 @@ function Answer({ x }: { x: Exchange }) {
           {r.placement?.reason ? <> {r.placement.reason}</> : null}
         </div>
       ) : (
-        <div className="an-answer__text">{r.response || "(no answer)"}</div>
+        <div className="an-answer__text an-md">
+          {/* Models answer in Markdown. react-markdown renders it without ever
+              executing HTML, which matters: the text comes from a model that
+              may have read an untrusted document. */}
+          <Markdown remarkPlugins={[remarkGfm]}>{r.response || "(no answer)"}</Markdown>
+        </div>
       )}
 
       <div className="an-answer__meta">

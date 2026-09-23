@@ -28,6 +28,9 @@ import { kernel, Decision } from "../../api/kernel"
  *  a machine that is busy generating tokens. */
 const POLL_MS = 600
 
+/** Steps shown while waiting before the list folds. */
+const VISIBLE = 3
+
 /** The last path-ish argument, shortened to something a person recognises. */
 function basename(entry: Decision): string {
   const paths = (entry.detail?.paths as string[] | undefined) ?? []
@@ -100,7 +103,13 @@ function Step({ entry }: { entry: Decision }) {
 export default function Working() {
   const [steps, setSteps] = useState<Decision[]>([])
   const [elapsed, setElapsed] = useState(0)
-  const baseline = useRef<number | null>(null)
+  const [open, setOpen] = useState(false)
+  // Entries written since this run started. By time, not by sequence number: the
+  // old watermark (`total - entries.length`) counted the last 40 entries of the
+  // whole ledger as this run's, so every wait showed other requests' history.
+  // A second of slack covers the request that reaches the daemon before the
+  // first poll does.
+  const since = useRef(Date.now() - 1000)
 
   // Elapsed time, because "is it stuck" is the actual question and a number
   // answers it better than any animation.
@@ -115,13 +124,10 @@ export default function Working() {
 
     const tick = async () => {
       try {
-        const { entries, total } = await kernel.ledger({ limit: 40 })
+        const { entries } = await kernel.ledger({ limit: 40 })
         if (stopped) return
-        // The first read fixes the watermark. Everything at or below it belongs
-        // to some earlier run and is none of this component's business.
-        if (baseline.current === null) baseline.current = total - entries.length
         const mine = entries
-          .filter((e) => e.seq > (baseline.current ?? 0))
+          .filter((e) => Date.parse(e.ts) >= since.current)
           .sort((a, b) => a.seq - b.seq)
         setSteps(mine)
       } catch {
@@ -146,7 +152,13 @@ export default function Working() {
 
       {steps.length > 0 && (
         <div className="an-working__steps">
-          {steps.map((e) => <Step key={e.seq} entry={e} />)}
+          {/* The last few steps are peripheral vision; the rest is one click away. */}
+          {(open ? steps : steps.slice(-VISIBLE)).map((e) => <Step key={e.seq} entry={e} />)}
+          {steps.length > VISIBLE && (
+            <button className="an-working__more" onClick={() => setOpen(!open)}>
+              {open ? "show less" : `+ ${steps.length - VISIBLE} earlier steps`}
+            </button>
+          )}
         </div>
       )}
     </div>
