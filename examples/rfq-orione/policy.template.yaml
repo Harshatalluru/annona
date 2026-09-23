@@ -16,6 +16,8 @@ classes:
     paths:
       - __PRATICHE__/Progetto-Orione/**
       - ~/Pratiche/Progetto-Orione/**   # il collegamento usato per le riprese
+      - __PRATICHE__/Memoria-Storica/**
+      - ~/Pratiche/Memoria-Storica/**
     patterns:
       - '[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]'          # codice fiscale
       - '\bIT\d{2}[A-Z]\d{10}[0-9A-Z]{12}\b'               # IBAN
@@ -26,6 +28,8 @@ classes:
   internal:
     paths:
       - __PRATICHE__/Accrediti/**
+      - __PRATICHE__/Commerciale/**
+      - ~/Pratiche/Commerciale/**
       - __INBOX__/**
       - ~/Documents/**
       - ~/Downloads/**
@@ -90,8 +94,12 @@ egress:
   sealed:
     paths:
       - __PRATICHE__/Progetto-Orione/**
+      - __PRATICHE__/Memoria-Storica/**
     patterns:
       - 'Progetto[\s_-]*Orione'
+      - 'Veloce Automotive'
+      - 'piattaforma Kappa'
+      - 'VA-2019-07'
       - 'HX-2026-114'
       - 'ORI-(SPEC|PH)-\d+'
 
@@ -107,4 +115,4 @@ tools:
     document_reader: [__PRATICHE__/**, __INBOX__/**, ~/Pratiche/**]
     explorer: [__PRATICHE__/**, ~/Pratiche/**]
 
-skills: [rfq-triage]
+skills: [rfq-triage, conflict-check]

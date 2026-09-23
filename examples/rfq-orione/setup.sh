@@ -97,6 +97,7 @@ awk -v keep="$FRONTIER" '/^#(VERTEX|ANTHROPIC)$/{skip=(substr($0,2)!=keep); next
         -e "s|__FRONTIER_MODEL__|${FRONTIER_MODEL:-google/gemini-2.5-flash}|g" \
   > "$ANNONA_HOME/policy.yaml"
 env/bin/annona skills-install catalog/skills/rfq-triage >/dev/null
+env/bin/annona skills-install "$KIT/skills/conflict-check" >/dev/null
 env/bin/annona policy validate
 case "$FRONTIER" in
   VERTEX)    echo "Frontiera: Vertex AI, progetto $GCP_PROJECT. Serve un login: gcloud auth application-default login" ;;
