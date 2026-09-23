@@ -40,6 +40,7 @@ __all__ = [
     "default_index_path",
     "ollama_embedder",
     "ollama_fact_extractor",
+    "roots",
 ]
 
 Embedder = Callable[[Sequence[str]], list[list[float]]]
@@ -232,6 +233,11 @@ class Fact:
         return f"{self.subject} — {self.relation} → {self.object}"
 
 
+def roots(folders: Iterable[str]) -> tuple[str, ...]:
+    """The policy's folders as the index stores paths: expanded and resolved."""
+    return tuple(str(Path(f.removesuffix("/**")).expanduser().resolve()) for f in folders)
+
+
 def _files(folders: Iterable[str]) -> list[Path]:
     """Every regular file under the policy's folders, hidden ones excluded.
 
@@ -286,6 +292,7 @@ class MemoryIndex:
         # numpy's stubs do not resolve under this project's mypy target; the
         # arrays are typed Any rather than silencing each operator.
         self._matrix: tuple[Any, list[int]] | None = None
+        self._paths: list[str] = []
 
     def close(self) -> None:
         self._db.close()
@@ -405,6 +412,20 @@ class MemoryIndex:
 
     # ── Search ───────────────────────────────────────────────────────────────
 
+    def _scope(self, within: Sequence[str] | None) -> Callable[[str], bool]:
+        """Whether a stored path lies under ``within``; ``None`` is the whole index.
+
+        Registered in SQLite too, so a passage outside the caller's folders is
+        dropped inside the query — never retrieved, scored or counted.
+        """
+        prefixes = None if within is None else tuple(r.rstrip("/") + "/" for r in within)
+
+        def allowed(path: str) -> bool:
+            return prefixes is None or any(path.startswith(p) for p in prefixes)
+
+        self._db.create_function("annona_allowed", 1, allowed, deterministic=True)
+        return allowed
+
     def _lexical(self, query: str, names_only: bool = False) -> list[int]:
         words = re.findall(r"[\w-]{3,}", query)
         if names_only:
@@ -421,17 +442,20 @@ class MemoryIndex:
             return []
         match = " OR ".join(f'"{t}"' for t in sorted(terms))
         rows = self._db.execute(
-            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?",
+            "SELECT chunks_fts.rowid FROM chunks_fts JOIN chunks ON chunks.id = chunks_fts.rowid "
+            "WHERE chunks_fts MATCH ? AND annona_allowed(chunks.path) "
+            "ORDER BY bm25(chunks_fts) LIMIT ?",
             (match, CANDIDATES),
         ).fetchall()
         return [r[0] for r in rows]
 
-    def _semantic(self, query: str, embed: Embedder) -> list[int]:
+    def _semantic(self, query: str, embed: Embedder, allowed: Callable[[str], bool]) -> list[int]:
         if self._matrix is None:
-            rows = self._db.execute("SELECT id, vec FROM chunks").fetchall()
+            rows = self._db.execute("SELECT id, vec, path FROM chunks").fetchall()
             if not rows:
                 return []
             ids = [r[0] for r in rows]
+            self._paths = [r[2] for r in rows]
             matrix: Any = np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows])
             matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9
             # ponytail: brute-force cosine in memory; fine to ~100k chunks, sqlite-vec or Qdrant beyond.
@@ -440,19 +464,30 @@ class MemoryIndex:
         q: Any = np.asarray(embed([query])[0], dtype=np.float32)
         q /= np.linalg.norm(q) + 1e-9
         similarity: Any = matrix @ q
+        mask: Any = np.array([allowed(p) for p in self._paths])
+        similarity[~mask] = -np.inf
         order = np.argsort(-similarity)[:CANDIDATES]
         return [ids[i] for i in order if similarity[i] >= MIN_SIMILARITY]
 
-    def search(self, query: str, embed: Embedder, k: int = 6, *, strict: bool = False) -> list[Hit]:
+    def search(
+        self,
+        query: str,
+        embed: Embedder,
+        k: int = 6,
+        *,
+        strict: bool = False,
+        within: Sequence[str] | None = None,
+    ) -> list[Hit]:
         """The ``k`` passages most relevant to ``query``, by fused rank.
 
         ``strict`` is for retrieval nobody asked for — the prefetch before the
         first turn: words match only as names and codes, so an ordinary question
         does not pull (and seal) the memory just by sharing a common word.
         """
+        allowed = self._scope(within)
         scores: dict[int, float] = {}
         try:
-            semantic = self._semantic(query, embed)
+            semantic = self._semantic(query, embed, allowed)
         except httpx.HTTPError:
             # The embedder runs on the local GPU; when it is down the words still
             # work. A memory that fails closed on an outage would silently stop
@@ -472,17 +507,21 @@ class MemoryIndex:
 
     # ── Graph ────────────────────────────────────────────────────────────────
 
-    def facts_about(self, query: str, hops: int = 2, limit: int = 12) -> list[Fact]:
+    def facts_about(
+        self, query: str, hops: int = 2, limit: int = 12, *, within: Sequence[str] | None = None
+    ) -> list[Fact]:
         """Relations reachable from the organisations the query names, ``hops`` deep.
 
         A conflict is usually two hops away and never in the request: Nordika →
         partner of → Veloce → bound by → NDA 7.3. Following edges answers that
         deterministically, where top-k passages might rank the NDA out.
         """
+        self._scope(within)
         keys = [
             r[0]
             for r in self._db.execute(
-                "SELECT DISTINCT subject_key FROM facts UNION SELECT DISTINCT object_key FROM facts"
+                "SELECT DISTINCT subject_key FROM facts WHERE annona_allowed(path) "
+                "UNION SELECT DISTINCT object_key FROM facts WHERE annona_allowed(path)"
             )
         ]
         text = query.lower()
@@ -496,7 +535,7 @@ class MemoryIndex:
             marks = ",".join("?" * len(frontier))
             rows = self._db.execute(
                 f"SELECT id, subject, relation, object, evidence, path, subject_key, object_key FROM facts "  # noqa: S608 - placeholders only
-                f"WHERE subject_key IN ({marks}) OR object_key IN ({marks})",
+                f"WHERE (subject_key IN ({marks}) OR object_key IN ({marks})) AND annona_allowed(path)",
                 (*frontier, *frontier),
             ).fetchall()
             visited |= frontier

@@ -49,7 +49,7 @@ from runner.capability.backends.echo import script_from_config
 from runner.capability.tooling import PermissionGate, RegistryToolExecutor
 from runner.kernel.errors import ConfigurationError
 from runner.kernel.ports import InferenceBackend
-from runner.kernel.types import Attachment, ToolCall
+from runner.kernel.types import Attachment, Subject, ToolCall
 
 from .cloud_client import AIBackendClient
 
@@ -467,6 +467,7 @@ Return the result in a structured format.""".format(
         prefetch: Sequence[ToolCall] = (),
         prefer_quality: bool = False,
         cancel: Callable[[], bool] | None = None,
+        subject: Subject | None = None,
     ) -> Any:
         """Run an agentic task: reason, call tools, repeat until done.
 
@@ -491,7 +492,7 @@ Return the result in a structured format.""".format(
             same shape this method has always returned, plus ``placement`` and
             ``ledger`` keys when the perimeter is enforcing.
         """
-        enforcement = self._build_enforcement()
+        enforcement = self._build_enforcement(subject)
         if enforcement is not None:
             return self._reason_enforced(
                 enforcement,
@@ -524,7 +525,7 @@ Return the result in a structured format.""".format(
 
     # ── The enforced path ─────────────────────────────────────────────────────
 
-    def _build_enforcement(self):
+    def _build_enforcement(self, subject: Subject | None = None):
         """Assemble the perimeter for this run, or ``None`` to stay legacy.
 
         Absence of a policy file is not treated as "enforce with defaults":
@@ -544,7 +545,7 @@ Return the result in a structured format.""".format(
             return None
 
         try:
-            return Enforcement.for_run(policy_file=path if path.exists() else None)
+            return Enforcement.for_run(policy_file=path if path.exists() else None, subject=subject)
         except Exception as exc:  # noqa: BLE001 - fail closed, loudly
             # A perimeter that cannot be built must stop the run, not fall back
             # to the unenforced path: the operator asked for enforcement, and

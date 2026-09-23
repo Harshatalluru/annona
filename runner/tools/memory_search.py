@@ -11,7 +11,7 @@ path in an outbound payload, so a passage from a sealed folder seals the run —
 the provenance of a retrieved passage is enforced by the same code as a file read.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from runner.memory import MemoryIndex, default_index_path
 from runner.memory.index import ollama_embedder
@@ -51,7 +51,16 @@ class MemorySearchTool(Tool):
             },
         )
 
-    def execute(self, query: str, top_k: int = 6, strict: bool = False, **kwargs) -> Dict[str, Any]:
+    def execute(
+        self,
+        query: str,
+        top_k: int = 6,
+        strict: bool = False,
+        within: Optional[List[str]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """``within`` is not advertised to the model: the perimeter sets it to the
+        folders this run's subject may retrieve from, overwriting anything else."""
         path = default_index_path()
         if not path.exists():
             return {
@@ -61,8 +70,10 @@ class MemorySearchTool(Tool):
         index = MemoryIndex(path)
         try:
             embed = ollama_embedder(index.meta("endpoint"), index.meta("model"))
-            hits = index.search(query, embed, k=max(1, min(int(top_k), 20)), strict=bool(strict))
-            facts = index.facts_about(query)
+            hits = index.search(
+                query, embed, k=max(1, min(int(top_k), 20)), strict=bool(strict), within=within
+            )
+            facts = index.facts_about(query, within=within)
         finally:
             index.close()
         return {

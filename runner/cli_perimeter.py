@@ -413,15 +413,21 @@ def verify(
 def audit(
     ledger: Path = typer.Option(None, "--ledger", "-l", help="Ledger file"),
     held: bool = typer.Option(False, "--held", help="List every refusal in full"),
+    subject: str = typer.Option(
+        None, "--subject", "-s", help="Only the decisions of one person (as the IdP names them)"
+    ),
 ):
     """📊 What actually happened: placements, holds, classes."""
     from runner.audit.ledger import read_entries
 
     target = Path(ledger) if ledger else _ledger_path()
     entries = list(read_entries(target))
+    if subject is not None:
+        entries = [e for e in entries if e.subject.lower() == subject.lower()]
 
     if not entries:
-        console.print(f"[yellow]No decisions recorded yet at {target}[/yellow]")
+        who = f" for {subject}" if subject is not None else ""
+        console.print(f"[yellow]No decisions recorded yet{who} at {target}[/yellow]")
         raise typer.Exit(0)
 
     placements: dict[str, int] = {}
@@ -437,6 +443,12 @@ def audit(
     chain = "[green]intact[/green]" if result.ok else f"[red]{result.problem}[/red]"
 
     console.print(f"\n📊 [bold]{len(entries)} decisions[/bold]  ·  chain {chain}")
+    if subject is None:
+        people: dict[str, int] = {}
+        for entry in entries:
+            people[entry.subject or "anonymous"] = people.get(entry.subject or "anonymous", 0) + 1
+        if set(people) != {"anonymous"}:
+            console.print(f"   subjects     {people}")
     console.print(f"   placements   {placements or '—'}")
     console.print(f"   outcomes     {outcomes}")
     console.print(f"   classes      {classes}")

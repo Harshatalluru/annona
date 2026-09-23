@@ -32,13 +32,13 @@ import os
 import threading
 import uuid
 from collections.abc import Iterator, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from runner.audit.metrics import METRICS, hold_reason
-from runner.kernel.types import SensitivityClass
+from runner.kernel.types import SensitivityClass, Subject
 
 __all__ = [
     "GENESIS_PREV",
@@ -86,12 +86,25 @@ class LedgerEntry:
     detail: Mapping[str, Any] = field(default_factory=dict)
     prev: str = GENESIS_PREV
     hash: str = ""
+    subject: str = ""
+    """Who asked, as proven by an identity provider. Empty: anonymous."""
+    groups: tuple[str, ...] = ()
 
     def body(self) -> dict[str, Any]:
-        """Everything the hash covers — that is, everything except the hash."""
+        """Everything the hash covers — that is, everything except the hash.
+
+        ``subject`` and ``groups`` are left out when empty, so an anonymous entry
+        hashes exactly as every entry did before subjects existed and older
+        ledgers still verify. When present they are inside the hash: rewriting
+        who asked breaks the chain like rewriting what was decided.
+        """
         data = asdict(self)
         data.pop("hash", None)
         data["detail"] = dict(self.detail)
+        data["groups"] = list(self.groups)
+        for key in ("subject", "groups"):
+            if not data[key]:
+                del data[key]
         return data
 
     def compute_hash(self) -> str:
@@ -99,7 +112,7 @@ class LedgerEntry:
 
     def sealed(self) -> LedgerEntry:
         """A copy carrying its own hash."""
-        return LedgerEntry(**{**self.body(), "hash": self.compute_hash()})
+        return replace(self, hash=self.compute_hash())
 
     def to_json(self) -> str:
         return _canonical({**self.body(), "hash": self.hash})
@@ -113,6 +126,8 @@ class LedgerEntry:
         unknown = set(raw) - known
         if unknown:
             raise ValueError(f"unknown fields in ledger entry: {', '.join(sorted(unknown))}")
+        if "groups" in raw:
+            raw["groups"] = tuple(raw["groups"])
         return cls(**raw)
 
 
@@ -228,8 +243,10 @@ class Ledger:
         *,
         run_id: str | None = None,
         fsync: bool = True,
+        subject: Subject | None = None,
     ) -> None:
         self._path = Path(path).expanduser()
+        self._subject = subject or Subject()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._run_id = run_id or uuid.uuid4().hex[:12]
         self._fsync = fsync
@@ -304,6 +321,8 @@ class Ledger:
                 payload_digest=digest(payload) if payload else "",
                 detail=dict(detail or {}),
                 prev=self._prev,
+                subject=self._subject.id,
+                groups=self._subject.groups,
             ).sealed()
 
             with self._path.open("a", encoding="utf-8") as handle:

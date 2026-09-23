@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,8 @@ from runner.capability.backends import (
     OpenAICompatibleBackend,
 )
 from runner.kernel.errors import ConfigurationError
-from runner.kernel.types import SensitivityClass
+from runner.kernel.types import SensitivityClass, Subject, ToolCall
+from runner.memory.index import roots
 from runner.placement.engine import PlacementDecisionEngine
 from runner.placement.registry import SubstrateRegistry, http_prober
 from runner.placement.router import RoutingBackend
@@ -297,6 +298,27 @@ def build_redactor(policy: Policy) -> Redactor | None:
     )
 
 
+class MemoryScope:
+    """Pins every ``memory_search`` to the folders this run's subject may read.
+
+    The folders come from the policy as narrowed for the subject, and they
+    overwrite whatever the call carried: scope is the perimeter's to set, never
+    the model's.
+    """
+
+    def __init__(self, inner: Any, within: tuple[str, ...]) -> None:
+        self._inner = inner
+        self._within = list(within)
+
+    def specs(self) -> Any:
+        return self._inner.specs()
+
+    def invoke(self, call: ToolCall) -> Any:
+        if call.name == "memory_search":
+            call = replace(call, arguments={**call.arguments, "within": self._within})
+        return self._inner.invoke(call)
+
+
 @dataclass
 class Enforcement:
     """The perimeter, assembled: policy, classification, placement, record.
@@ -332,6 +354,7 @@ class Enforcement:
         probe: bool = True,
         fsync: bool = True,
         secrets: Mapping[str, str] | None = None,
+        subject: Subject | None = None,
     ) -> Enforcement:
         """Assemble a perimeter for one run.
 
@@ -348,6 +371,9 @@ class Enforcement:
             run_id: Correlates every entry of one run in the ledger.
             probe: Whether to actively probe substrate liveness over HTTP.
             fsync: Whether to fsync every ledger append. Off only in tests.
+            subject: Who asked, as proven by an identity provider. The policy is
+                narrowed to what applies to them (``Policy.for_subject``) before
+                anything else is built, and every ledger entry carries them.
         """
         if policy is None:
             path = Path(policy_file) if policy_file else policy_path()
@@ -360,6 +386,10 @@ class Enforcement:
                     f"no policy at {path}; using the built-in default, which registers "
                     "only the local runtime. Run `annona init` to write one."
                 )
+
+        who = subject or Subject()
+        who = Subject(who.id, policy.groups_of(who), who.via)
+        policy = policy.for_subject(who)
 
         classifier = PolicyClassifier(policy)
         # The floor is the policy's, not this constructor's. `WorkingSet()`
@@ -377,7 +407,7 @@ class Enforcement:
 
         if ledger_path is None:
             ledger_path = policy_path().parent / "ledger.jsonl"
-        ledger = Ledger(ledger_path, run_id=run_id, fsync=fsync)
+        ledger = Ledger(ledger_path, run_id=run_id, fsync=fsync, subject=who)
 
         if backends is None:
             built: dict[str, Any] = {}
@@ -428,7 +458,8 @@ class Enforcement:
         everything that comes back. Order matters: a skill body is material
         entering the transcript like any other, so the tracker has to see it too.
         """
-        with_skills = SkillfulExecutor(inner, self.skill_registry(), self.working_set, self.ledger)
+        scoped = MemoryScope(inner, roots(self.policy.memory.folders))
+        with_skills = SkillfulExecutor(scoped, self.skill_registry(), self.working_set, self.ledger)
         return TrackingExecutor(with_skills, self.classifier, self.working_set, self.ledger)
 
     def skill_registry(self) -> SkillRegistry:

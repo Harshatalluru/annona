@@ -67,10 +67,10 @@ from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from runner.audit.ledger import read_entries, verify_file
+from runner.audit.ledger import Ledger, read_entries, verify_file
 from runner.audit.metrics import METRICS
 from runner.kernel.errors import ConfigurationError, PolicyError
-from runner.kernel.types import ToolCall
+from runner.kernel.types import Subject, ToolCall
 from runner.memory import default_index_path
 from runner.pairing import is_this_machine
 from runner.policy.loader import load_policy
@@ -82,6 +82,7 @@ from runner.policy.profiles import (
 )
 from runner.services import attachments as inbox
 from runner.services.enforcement import policy_path
+from runner.services.identity import IdentityError, authenticate
 from runner.tools.extractors import capabilities, supported_extensions
 
 __all__ = ["AskRequest", "CreatePolicyRequest", "kernel_router"]
@@ -667,7 +668,7 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
         return {"deleted": identifier}
 
     @router.post("/ask")
-    def ask(req: AskRequest):
+    def ask(req: AskRequest, request: Request):
         """Run one request through the perimeter and return what it decided.
 
         Deliberately synchronous: `def`, not `async def`, so FastAPI runs it in a
@@ -688,6 +689,20 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
         before = sum(1 for _ in read_entries(ledger)) if ledger.exists() else 0
 
         policy = _policy_or_none()
+        # Who asked, before anything is read on their behalf. A refusal is a
+        # decision like any other: recorded, without the credential.
+        subject = Subject()
+        if policy is not None:
+            try:
+                subject = authenticate(policy.identity, request.headers)
+            except IdentityError as exc:
+                Ledger(ledger).record(
+                    "identity",
+                    outcome="refused",
+                    klass=policy.default_class,
+                    detail={"reason": str(exc)},
+                )
+                raise HTTPException(status_code=401, detail=str(exc)) from exc
         prompt, media, reads = _with_attachments(req, policy)
         # Ask the company's memory before the first turn, when the policy says so.
         # A tool call like any other: gated, classified, in the ledger — and the
@@ -724,6 +739,7 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
                 prefetch=reads,
                 prefer_quality=req.escalate,
                 cancel=cancel,
+                subject=subject,
             )
         except ConfigurationError as exc:
             # The perimeter could not be assembled. 409, not 500: nothing is

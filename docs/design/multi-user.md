@@ -1,6 +1,7 @@
 # More than one person — identity, a subject in every decision, rules per group
 
-Status: proposal, 2026-09-24. Builds on the order already written in
+Status: U1–U3 built 2026-09-24 (`runner/services/identity.py`, `Policy.for_subject`,
+`tests/test_identity.py`); U4–U7 open. Builds on the order already written in
 [`shared-context.md`](shared-context.md) and makes it concrete.
 
 ## Why now
@@ -46,12 +47,17 @@ identity:
       groups_claim: groups
     - kind: jwt                      # optional: people who sign in with Akaion
       preset: akaion                 # = issuer https://securetoken.google.com/<project>,
-                                     #   audience <project>, Google's securetoken JWKS
+      project: akaion-prod-eu        #   audience <project>, Google's securetoken JWKS
     - kind: proxy
       email_header: X-Forwarded-Email
       groups_header: X-Forwarded-Groups
-      secret_env: ANNONA_PROXY_SECRET
+      secret_env: ANNONA_PROXY_SECRET  # the proxy sends it as X-Annona-Proxy-Secret
 ```
+
+Only asymmetric tokens (RS256, ES256) are accepted, `exp`/`iss`/`aud` are required, and
+with `subject_claim: email` a token saying `email_verified: false` is refused. A present
+but wrong credential is refused even when identity is optional — never downgraded to
+anonymous.
 
 The first provider that accepts the credential wins; a credential every provider rejects
 is refused and recorded. Nothing is sent to Akaion to verify an Akaion token — the keys

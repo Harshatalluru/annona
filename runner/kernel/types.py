@@ -39,6 +39,7 @@ __all__ = [
     "Role",
     "SensitivityClass",
     "StopReason",
+    "Subject",
     "ToolCall",
     "ToolInvocation",
     "ToolResult",
@@ -205,6 +206,25 @@ class CompletionRequest:
     temperature: float = 0.7
     max_tokens: int = 4096
     model: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Subject:
+    """Who asked: proven by an identity provider, never claimed by the request.
+
+    The empty id is the anonymous subject — today's single-user laptop. Groups
+    are the ones in force for the run: the provider's claim plus the policy's
+    own ``groups:`` membership.
+    """
+
+    id: str = ""
+    groups: tuple[str, ...] = ()
+    via: str = ""
+    """Which provider proved it (``jwt:<issuer>``, ``proxy``); empty when anonymous."""
+
+    @property
+    def anonymous(self) -> bool:
+        return not self.id
 
 
 @dataclass(frozen=True, slots=True)

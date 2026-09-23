@@ -30,12 +30,12 @@ import fnmatch
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from runner.kernel.types import SensitivityClass
+from runner.kernel.types import SensitivityClass, Subject
 from runner.policy.redaction import RedactionPolicy
 
 __all__ = [
@@ -175,6 +175,8 @@ class Rule:
     on_unavailable: Unavailable = "hold"
     prefer: Prefer = "privacy"
     id: str = ""
+    group: str = ""
+    """Applies only when the subject is in this group. Empty: to everyone."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +380,8 @@ class MemoryPolicy:
     """This company's own name, so the graph writes it instead of "noi"/"we"."""
     """Build the graph of who is whose partner, customer or bound by what, with
     the ``embed_with`` substrate's chat model, at indexing time."""
+    folder_groups: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """Groups that may retrieve from a folder. A folder not listed: everyone."""
 
     @property
     def active(self) -> bool:
@@ -401,6 +405,52 @@ class LinkPolicy:
     It replaces ``release`` for that endpoint only, so a Studio inside the
     company network can receive what the public one cannot. See ADR 0007.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityProvider:
+    """One way a request proves who it comes from. See ``docs/design/multi-user.md``.
+
+    ``jwt``: a bearer token checked against the issuer's public keys — any OIDC
+    provider, and the Akaion platform as a preset of it. ``proxy``: headers set
+    by an authenticating proxy, trusted only with the proxy's shared secret.
+    """
+
+    kind: Literal["jwt", "proxy"]
+    issuer: str = ""
+    audience: str = ""
+    jwks_url: str = ""
+    subject_claim: str = "email"
+    groups_claim: str = "groups"
+    email_header: str = "X-Forwarded-Email"
+    groups_header: str = "X-Forwarded-Groups"
+    secret_env: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityPolicy:
+    """Where subjects come from, and whether a request may come from nobody."""
+
+    required: bool = False
+    providers: tuple[IdentityProvider, ...] = ()
+
+
+SUBJECT_IN_PATH = "${subject}"
+_SAFE_SUBJECT = re.compile(r"[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*")
+
+
+def _personal(pattern: str, subject: Subject) -> str | None:
+    """``pattern`` with the subject's id in place of ``${subject}``, or ``None``.
+
+    Dropped, not expanded, for the anonymous subject and for any id that is not
+    one plain path segment: "", "..", "a/b" or "*" would turn one person's
+    folder into everyone's.
+    """
+    if SUBJECT_IN_PATH not in pattern:
+        return pattern
+    if subject.anonymous or not _SAFE_SUBJECT.fullmatch(subject.id) or ".." in subject.id:
+        return None
+    return pattern.replace(SUBJECT_IN_PATH, subject.id)
 
 
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -447,6 +497,48 @@ class Policy:
     memory: MemoryPolicy = field(default_factory=MemoryPolicy)
     skill_catalogs: tuple[SkillCatalog, ...] = ()
     source: str = "<memory>"
+    identity: IdentityPolicy = field(default_factory=IdentityPolicy)
+    groups: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """Group name → members, as ids or globs (``*@legal.acme.it``)."""
+
+    # ── Subjects ──────────────────────────────────────────────────────────────
+
+    def groups_of(self, subject: Subject) -> tuple[str, ...]:
+        """The provider's groups plus the policy's own membership, in that order."""
+        if subject.anonymous:
+            return ()
+        who = subject.id.lower()
+        mine = [
+            name
+            for name, members in self.groups.items()
+            if any(fnmatch.fnmatchcase(who, m.lower()) for m in members)
+        ]
+        return tuple(dict.fromkeys([*subject.groups, *mine]))
+
+    def for_subject(self, subject: Subject) -> Policy:
+        """This policy as it applies to one subject.
+
+        Rules for other groups are gone (``rule_for`` then finds the next rule
+        for the class, or none: deny), ``${subject}`` is expanded in the tool
+        allow-lists, and memory folders of other groups are dropped. Seals and
+        classes are about the material, not the person: untouched.
+        """
+        groups = set(self.groups_of(subject))
+        allow = {
+            tool: tuple(p for p in (_personal(q, subject) for q in paths) if p is not None)
+            for tool, paths in self.tools.allow.items()
+        }
+        folders = tuple(
+            f
+            for f in self.memory.folders
+            if not self.memory.folder_groups.get(f) or groups & set(self.memory.folder_groups[f])
+        )
+        return replace(
+            self,
+            rules=tuple(r for r in self.rules if not r.group or r.group in groups),
+            tools=replace(self.tools, allow=allow),
+            memory=replace(self.memory, folders=folders),
+        )
 
     @property
     def enabled_skills(self) -> tuple[str, ...]:

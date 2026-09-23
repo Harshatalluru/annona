@@ -24,6 +24,8 @@ from runner.policy.models import (
     SKILL_NAME,
     ClassSpec,
     EgressPolicy,
+    IdentityPolicy,
+    IdentityProvider,
     LinkPolicy,
     MemoryPolicy,
     Policy,
@@ -200,6 +202,7 @@ def _parse_rules(raw: Sequence[Any], known: set[str]) -> tuple[Rule, ...]:
                 on_unavailable=on_unavailable,  # type: ignore[arg-type]
                 prefer=prefer,  # type: ignore[arg-type]
                 id=str(body.get("id") or f"rules[{index}]"),
+                group=str(match.get("group", "")),
             )
         )
 
@@ -312,7 +315,19 @@ def _parse_skill_catalogs(raw: Any) -> tuple[SkillCatalog, ...]:
 
 def _parse_memory(raw: Mapping[str, Any]) -> MemoryPolicy:
     """Parse the ``memory:`` section (see :class:`MemoryPolicy`)."""
-    folders = tuple(str(f) for f in _require_sequence(raw.get("folders"), "memory.folders"))
+    folders: list[str] = []
+    folder_groups: dict[str, tuple[str, ...]] = {}
+    for index, entry in enumerate(_require_sequence(raw.get("folders"), "memory.folders")):
+        # A folder is a path, or {path, groups} when only some groups may retrieve from it.
+        if isinstance(entry, Mapping):
+            if not entry.get("path"):
+                raise PolicyError(f"memory.folders[{index}] needs a path")
+            folders.append(str(entry["path"]))
+            groups = _require_sequence(entry.get("groups"), f"memory.folders[{index}].groups")
+            if groups:
+                folder_groups[folders[-1]] = tuple(str(g) for g in groups)
+        else:
+            folders.append(str(entry))
     if folders and not raw.get("embed_with"):
         raise PolicyError("memory.folders is set, but memory.embed_with names no substrate")
     try:
@@ -322,7 +337,8 @@ def _parse_memory(raw: Mapping[str, Any]) -> MemoryPolicy:
     if not 1 <= top_k <= 20:
         raise PolicyError("memory.top_k must be between 1 and 20")
     return MemoryPolicy(
-        folders=folders,
+        folders=tuple(folders),
+        folder_groups=folder_groups,
         embed_with=str(raw.get("embed_with", "")),
         model=str(raw.get("model", "bge-m3")),
         prefetch=bool(raw.get("prefetch", False)),
@@ -409,6 +425,69 @@ def _parse_redaction(raw: Mapping[str, Any]) -> RedactionPolicy:
     )
 
 
+AKAION_JWKS = (
+    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+)
+
+
+def _parse_identity(raw: Mapping[str, Any]) -> IdentityPolicy:
+    """Parse ``identity:``. Every provider is complete or the policy is refused."""
+    providers: list[IdentityProvider] = []
+    for index, entry in enumerate(_require_sequence(raw.get("providers"), "identity.providers")):
+        body = dict(_require_mapping(entry, f"identity.providers[{index}]"))
+        where = f"identity.providers[{index}]"
+        kind = body.pop("kind", "")
+        preset = body.pop("preset", "")
+        if preset:
+            # The Akaion platform signs in with Firebase: its ID tokens are plain
+            # JWTs from Google's securetoken issuer. A preset, not a code path.
+            if preset != "akaion":
+                raise PolicyError(f"{where}.preset must be akaion, got {preset!r}")
+            project = body.pop("project", "")
+            if not project:
+                raise PolicyError(
+                    f"{where}: the akaion preset needs project (the Firebase project id)"
+                )
+            body = {
+                "issuer": f"https://securetoken.google.com/{project}",
+                "audience": str(project),
+                "jwks_url": AKAION_JWKS,
+                **body,
+            }
+            kind = kind or "jwt"
+        known = set(IdentityProvider.__dataclass_fields__) - {"kind"}
+        unknown = set(body) - known
+        if unknown:
+            raise PolicyError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
+        provider = IdentityProvider(kind=kind, **{k: str(v) for k, v in body.items()})  # type: ignore[arg-type]
+        if kind == "jwt":
+            missing = [k for k in ("issuer", "audience", "jwks_url") if not getattr(provider, k)]
+            if missing:
+                raise PolicyError(f"{where} (jwt) needs {', '.join(missing)}")
+            if not provider.jwks_url.startswith("https://"):
+                raise PolicyError(f"{where}.jwks_url must be https")
+        elif kind == "proxy":
+            # Headers anyone on the network path can set are trusted only with
+            # the proxy's secret beside them.
+            if not provider.secret_env:
+                raise PolicyError(f"{where} (proxy) needs secret_env")
+        else:
+            raise PolicyError(f"{where}.kind must be jwt or proxy, got {kind!r}")
+        providers.append(provider)
+
+    required = bool(raw.get("required", False))
+    if required and not providers:
+        raise PolicyError("identity.required is true, but no provider can prove anyone")
+    return IdentityPolicy(required=required, providers=tuple(providers))
+
+
+def _parse_groups(raw: Mapping[str, Any]) -> dict[str, tuple[str, ...]]:
+    return {
+        str(name): tuple(str(m) for m in _require_sequence(members, f"groups.{name}"))
+        for name, members in raw.items()
+    }
+
+
 def _parse_tools(raw: Mapping[str, Any]) -> ToolPolicy:
     allow_raw = _require_mapping(raw.get("allow"), "tools.allow")
     allow = {
@@ -465,6 +544,8 @@ def parse_policy(document: Mapping[str, Any], *, source: str = "<memory>") -> Po
         memory=_parse_memory(_require_mapping(document.get("memory"), "memory")),
         skill_catalogs=_parse_skill_catalogs(document.get("skill_catalogs")),
         source=source,
+        identity=_parse_identity(_require_mapping(document.get("identity"), "identity")),
+        groups=_parse_groups(_require_mapping(document.get("groups"), "groups")),
     )
 
     # A rule cannot ask for an action the deployment cannot perform. Discovering
