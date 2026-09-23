@@ -17,11 +17,12 @@ Mac Apple Silicon o Linux, DGX Spark compreso:
 ```bash
 git clone https://github.com/akaion-ai/annona.git
 cd annona/examples/rfq-orione
-echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env     # facoltativo: senza, la demo è solo locale
+echo 'GCP_PROJECT=il-tuo-progetto' > .env      # facoltativo: frontiera su Vertex AI (UE)
+# oppure: echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env   — senza nessuno dei due la demo è solo locale
 ./setup.sh
 ```
 
-`setup.sh` scarica ciò che manca (uv con Python 3.12, Node 22, Ollama, rizzo-pii, il modello) e scrive la policy. Non tocca `~/.annona`: tutto resta in `.work/`.
+`setup.sh` scarica ciò che manca (uv con Python 3.12, Node 22, Ollama, rizzo-pii, il modello, l'embedding `bge-m3`), scrive la policy e indicizza la memoria storica. Con Vertex serve prima `gcloud auth application-default login`. Non tocca `~/.annona`: tutto resta in `.work/`.
 
 Il modello locale si sceglie dalla RAM: 48 GB o più → `qwen2.5:32b`, altrimenti `qwen2.5:14b`. Per forzarlo: `MODEL=qwen2.5:72b ./setup.sh`.
 
