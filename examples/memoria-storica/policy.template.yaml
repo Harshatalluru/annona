@@ -1,12 +1,12 @@
-# Annona — policy della demo «Progetto Orione». La scrive setup.sh:
+# Annona — policy dell'esempio «Memoria storica». La scrive setup.sh:
 # __PRATICHE__ diventa il percorso assoluto delle pratiche, __MODEL__ il modello locale,
 # e resta un solo blocco di frontiera: VERTEX se c'è GCP_PROJECT, ANTHROPIC se c'è
 # ANTHROPIC_API_KEY, nessuno altrimenti.
 #
-# Tre esiti:
-#   1. la pratica Orione è sigillata: gira solo in locale, e se il locale cade si ferma;
-#   2. l'accredito fornitore (CF + IBAN, nessun progetto) può uscire solo redatto;
-#   3. la nota pubblica va al modello migliore.
+# Il caso: il CEO chiede una bozza di contratto per Nordika Mobility. Solo la
+# memoria dell'azienda sa che Nordika è partner diretto di Veloce Automotive,
+# cliente storico, e che l'NDA con Veloce impone di avvisarlo prima. La memoria è
+# indicizzata e interrogata in locale; ciò che recupera sigilla il run.
 
 version: 1
 default: deny
@@ -14,8 +14,7 @@ default: deny
 classes:
   restricted:
     paths:
-      - __PRATICHE__/Progetto-Orione/**
-      - ~/Pratiche/Progetto-Orione/**   # il collegamento usato per le riprese
+      - __PRATICHE__/Memoria-Storica/**
     patterns:
       - '[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]'          # codice fiscale
       - '\bIT\d{2}[A-Z]\d{10}[0-9A-Z]{12}\b'               # IBAN
@@ -27,12 +26,13 @@ classes:
   # classificato per dove sta resta di quella classe anche redatto.
   internal:
     paths:
+      - __PRATICHE__/Commerciale/**
       - ~/Documents/**
       - ~/Downloads/**
     patterns:
       - '(?i)\b(offerta|preventivo|proposta commerciale|listino|quotazione|iva esclusa|\+\s?iva|contratto|condizioni economiche)\b'
       - '€\s?\d|\d\s?€|\bEUR\s?\d'
-  # Public = una domanda senza allegati, o la cartella della nota pubblica.
+  # Public = una domanda senza allegati.
   public:
     default: true
 
@@ -70,7 +70,7 @@ substrates:
 #/ANTHROPIC
 
 rules:
-  - id: R-orione
+  - id: R-memoria
     match: {class: restricted}
     allow: [local-gpu]
     on_unavailable: redact
@@ -88,11 +88,11 @@ egress:
     allowed_for: [internal, restricted]
   sealed:
     paths:
-      - __PRATICHE__/Progetto-Orione/**
+      - __PRATICHE__/Memoria-Storica/**
     patterns:
-      - 'Progetto[\s_-]*Orione'
-      - 'HX-2026-114'
-      - 'ORI-(SPEC|PH)-\d+'
+      - 'Veloce Automotive'
+      - 'piattaforma Kappa'
+      - 'VA-2019-07'
 
 redaction:
   provider: rizzo-pii
@@ -103,7 +103,22 @@ redaction:
 tools:
   allow:
     # la seconda cartella è dove l'interfaccia mette un file allegato (run.sh esporta ANNONA_INBOX).
-    document_reader: [__PRATICHE__/**, __INBOX__/**, ~/Pratiche/**]
-    explorer: [__PRATICHE__/**, ~/Pratiche/**]
+    document_reader: [__PRATICHE__/**, __INBOX__/**]
+    explorer: [__PRATICHE__/**]
+    memory_search: [__PRATICHE__/**]
 
-skills: [rfq-triage]
+# La memoria storica dell'azienda: indicizzata in locale da bge-m3 su local-gpu,
+# interrogata prima di ogni domanda. Un passaggio recuperato porta con sé il
+# percorso del documento, e con quello la sua classe e il suo sigillo.
+memory:
+  folders:
+    - __PRATICHE__/Memoria-Storica/**
+    - __PRATICHE__/Commerciale/**
+  embed_with: local-gpu
+  model: bge-m3
+  prefetch: true
+  entities: true     # la mappa di chi è partner di chi, estratta da local-gpu
+  company: Meccatronica Lariana S.r.l.
+  top_k: 6
+
+skills: [conflict-check]

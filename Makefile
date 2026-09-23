@@ -9,7 +9,7 @@ PY  := env/bin/python
 PIP := env/bin/pip
 
 .DEFAULT_GOAL := help
-.PHONY: help setup test test-cov test-live test-container lint format typecheck contracts \
+.PHONY: help setup hooks test test-cov test-live test-container lint format typecheck contracts \
         check demo run verify image image-multiarch up down docs docs-serve clean
 
 help: ## Show this help
@@ -21,7 +21,12 @@ setup: ## Create the venv and install runtime + dev dependencies
 	$(PIP) install --quiet --upgrade pip
 	$(PIP) install --quiet -r requirements-dev.txt
 	$(PIP) install --quiet -e .
+	@$(MAKE) --no-print-directory hooks
 	@echo "ready — try 'make demo' or 'make check'"
+
+hooks: ## Refuse pushes that are not green (runs `make check` before every push)
+	@git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks \
+		&& echo "pre-push hook on: every push runs make check" || true
 
 test: ## Run the test suite
 	$(PY) -m pytest

@@ -8,7 +8,7 @@ Una richiesta di offerta per probe card coperta da NDA, e tre esiti:
 
 Cliente, persone, codici fiscali e IBAN in `Pratiche/` sono inventati.
 
-C'è anche un secondo caso, la **memoria storica**: il CEO chiede una bozza di contratto per Nordika Mobility, e solo la memoria dell'azienda (`Pratiche/Memoria-Storica`) sa che Nordika è partner diretto di Veloce Automotive, cliente storico con un NDA che impone di avvisarlo. `setup.sh` indicizza la memoria in locale (`annona memory index`, embedding `bge-m3`); a ogni domanda Annona la interroga prima del primo turno. Prova: `Prepara la bozza di contratto per Nordika Mobility, come chiesto dal CEO.` → il run diventa restricted e sigillato, resta in locale, e il modello si ferma per una decisione del CEO.
+Il caso della memoria storica (Nordika Mobility) è un esempio a parte: [`../memoria-storica`](../memoria-storica).
 
 ## Installare (una volta)
 
@@ -22,7 +22,7 @@ echo 'GCP_PROJECT=il-tuo-progetto' > .env      # facoltativo: frontiera su Verte
 ./setup.sh
 ```
 
-`setup.sh` scarica ciò che manca (uv con Python 3.12, Node 22, Ollama, rizzo-pii, il modello, l'embedding `bge-m3`), scrive la policy e indicizza la memoria storica. Con Vertex serve prima `gcloud auth application-default login`. Non tocca `~/.annona`: tutto resta in `.work/`.
+`setup.sh` scarica ciò che manca (uv con Python 3.12, Node 22, Ollama, rizzo-pii, il modello) e scrive la policy. Gli strumenti si scaricano una volta sola, in `../_shared/.work`, e servono a tutti gli esempi. Con Vertex serve prima `gcloud auth application-default login`. Non tocca `~/.annona`: tutto resta in `.work/`.
 
 Il modello locale si sceglie dalla RAM: 48 GB o più → `qwen2.5:32b`, altrimenti `qwen2.5:14b`. Per forzarlo: `MODEL=qwen2.5:72b ./setup.sh`.
 

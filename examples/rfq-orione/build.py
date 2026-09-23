@@ -1,45 +1,20 @@
 """Genera la pratica finta «Progetto Orione» per la demo di Annona.
 
 Tutto è inventato: cliente, persone, codici fiscali, IBAN e numeri.
-Uso: ../akaion-app-runner/env/bin/python build.py
+Uso: ../../env/bin/python build.py   (serve Chrome per i PDF)
 """
-import subprocess
-import tempfile
-from email.message import EmailMessage
+import sys
 from pathlib import Path
 
 import openpyxl
 from docx import Document
 
 HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE.parent / "_shared"))
+from fixtures import eml, pdf  # noqa: E402
+
 OUT = HERE / "Pratiche" / "Progetto-Orione"
 PUB = HERE / "Pratiche" / "Pubblico"
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-
-CSS = """
-body{font-family:Helvetica,Arial,sans-serif;font-size:11pt;color:#111;margin:36px}
-h1{font-size:18pt;margin:0 0 4px} h2{font-size:13pt;margin:22px 0 6px}
-.conf{border:2px solid #b00;color:#b00;padding:6px 10px;font-weight:bold;margin-bottom:18px}
-table{border-collapse:collapse;width:100%} td,th{border:1px solid #999;padding:5px 8px;text-align:left}
-th{background:#eee} .small{font-size:9pt;color:#555}
-"""
-
-
-def pdf(html: str, dest: Path) -> None:
-    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
-        f.write(f"<html><head><meta charset='utf-8'><style>{CSS}</style></head><body>{html}</body></html>")
-    subprocess.run(
-        [CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-         f"--print-to-pdf={dest}", f"file://{f.name}"],
-        check=True, capture_output=True,
-    )
-
-
-def eml(dest: Path, frm: str, to: str, subject: str, date: str, body: str) -> None:
-    m = EmailMessage()
-    m["From"], m["To"], m["Subject"], m["Date"] = frm, to, subject, date
-    m.set_content(body)
-    dest.write_bytes(bytes(m))
 
 
 def spec() -> str:
@@ -131,74 +106,6 @@ def letter(dest: Path) -> None:
     d.save(dest)
 
 
-# ── Caso 2 · la memoria storica ──────────────────────────────────────────────
-# Il CEO chiede una bozza di contratto per Nordika Mobility. Quello che nessun
-# modello di frontiera può sapere è scritto solo qui: Nordika è partner diretto di
-# Veloce Automotive, cliente storico, e l'NDA con Veloce impone di avvisarli prima.
-MEM = HERE / "Pratiche" / "Memoria-Storica"
-COM = HERE / "Pratiche" / "Commerciale"
-
-
-def memoria() -> None:
-    MEM.mkdir(parents=True, exist_ok=True)
-    COM.mkdir(parents=True, exist_ok=True)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Clienti storici"
-    ws.append(["Cliente", "Dal", "Quota fatturato 2025", "Referente", "Note"])
-    ws.append(["Veloce Automotive S.p.A.", 2014, "38%", "ing. Davide Ferrario",
-               "Banchi di test BMS per la piattaforma elettrica Kappa. NDA VA-2019-07."])
-    ws.append(["Officine Brembo Nord S.r.l.", 2017, "11%", "Sara Longhi", "Collaudo centraline freno."])
-    ws.append(["Mobilità Adriatica S.p.A.", 2021, "7%", "Luca Pini", "Retrofit linee di collaudo."])
-    wb.save(MEM / "Anagrafica_clienti_storici.xlsx")
-
-    d = Document()
-    d.add_heading("Verbale riunione con Veloce Automotive — 12 marzo 2026", 1)
-    d.add_paragraph("Presenti: CEO Meccatronica Lariana; ing. Davide Ferrario e Giorgio Sala per Veloce Automotive.")
-    d.add_paragraph(
-        "Veloce comunica, in via riservata, che la piattaforma elettrica Kappa sarà sviluppata insieme a "
-        "Nordika Mobility GmbH, partner commerciale diretto con accordo di fornitura in esclusiva dal 2025. "
-        "Nordika riceverà le specifiche dei banchi di test BMS che realizziamo per Veloce."
-    )
-    d.add_paragraph(
-        "Veloce chiede che qualunque richiesta di Nordika o di altri partner della piattaforma Kappa venga "
-        "segnalata prima di rispondere, come previsto dalla clausola 7.3 dell'NDA VA-2019-07. "
-        "Ferrario: «Se scopriamo che lavorate per i nostri partner senza dircelo, la fiducia finisce lì.»"
-    )
-    d.save(MEM / "Verbale_Veloce_2026-03-12.docx")
-
-    pdf(
-        """<h1>Accordo di riservatezza VA-2019-07</h1>
-<p class="small">tra Veloce Automotive S.p.A. e Meccatronica Lariana S.r.l. · rinnovato il 15 gennaio 2025</p>
-<p>1. Le Informazioni Riservate comprendono le specifiche dei banchi di test BMS, la roadmap della
-piattaforma Kappa e l'identità dei partner coinvolti.</p>
-<p><b>7.3 Partner della piattaforma.</b> Prima di accettare incarichi da partner commerciali di Veloce
-Automotive coinvolti nella piattaforma Kappa, Meccatronica Lariana ne dà comunicazione scritta a Veloce,
-che può opporsi entro 15 giorni.</p>
-<p>9. La violazione dell'articolo 7 è giusta causa di recesso dal contratto quadro.</p>""",
-        MEM / "NDA_Veloce_VA-2019-07.pdf",
-    )
-
-    (MEM / "Note_direzione.md").write_text(
-        "# Note della direzione (non condividere)\n\n"
-        "- Veloce Automotive vale il 38% del fatturato 2025: è il cliente da proteggere prima di tutti.\n"
-        "- Rinnovo del contratto quadro con Veloce a dicembre 2026.\n"
-        "- Con Nordika Mobility c'è stato un solo contatto, a una fiera nel 2024.\n",
-        encoding="utf-8",
-    )
-
-    eml(
-        COM / "CEO_bozza_contratto_Nordika.eml",
-        "CEO <ceo@meccatronica-lariana.example>",
-        "Ufficio Vendite <vendite@meccatronica-lariana.example>",
-        "Bozza contratto Nordika Mobility",
-        "Tue, 22 Sep 2026 18:05:00 +0200",
-        "Ciao a tutti,\n\nNordika Mobility GmbH ci chiede 4 banchi di test BMS, consegna primo trimestre "
-        "2027. Preparate una bozza di contratto entro venerdì, condizioni standard.\n\nGrazie\nIl CEO\n",
-    )
-
-
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     PUB.mkdir(parents=True, exist_ok=True)
@@ -242,7 +149,6 @@ def main() -> None:
         "con migliaia di contatti.</p>",
         PUB / "Nota_tecnica_probe_card.pdf",
     )
-    memoria()
     print("ok:", *sorted(p.relative_to(HERE) for p in (HERE / "Pratiche").rglob("*.*")), sep="\n  ")
 
 

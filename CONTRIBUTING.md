@@ -14,7 +14,10 @@ make demo           # a real agentic run, offline, in ten seconds
 make check          # lint · types · contracts · tests
 ```
 
-`make setup` needs Python 3.10+. Nothing else, and no credentials.
+`make setup` needs Python 3.10+. Nothing else, and no credentials. It also turns
+on a pre-push hook (`make hooks` on an existing clone): every `git push` runs
+`make check` first and stops if anything is red. `git push --no-verify` skips it,
+knowingly.
 
 ## Before you open a pull request
 
