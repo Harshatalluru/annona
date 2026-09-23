@@ -25,17 +25,21 @@ Endpoints:
 """
 
 import os
+import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
+
+from runner.audit.metrics import METRICS
 
 from .auth import AuthManager
 from .brain.manager import BrainManager
@@ -129,6 +133,20 @@ def create_app(
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "annona"}
+
+    # ── Metrics ───────────────────────────────────────────────────────────────
+
+    @app.get("/metrics", response_class=PlainTextResponse)
+    def metrics(authorization: str = Header(default="")):
+        """Prometheus text format. Numbers only: no path, prompt or person is a label.
+
+        Bound with the API (loopback by default). A scraper on another host goes
+        through the same tunnel or proxy, or presents ANNONA_METRICS_TOKEN.
+        """
+        token = os.getenv("ANNONA_METRICS_TOKEN", "")
+        if token and not secrets.compare_digest(authorization, f"Bearer {token}"):
+            raise HTTPException(status_code=401, detail="metrics token required")
+        return PlainTextResponse(METRICS.prometheus(), media_type="text/plain; version=0.0.4")
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 

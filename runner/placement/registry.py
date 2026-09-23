@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
+from runner.audit.metrics import METRICS
 from runner.policy.models import Substrate
 
 __all__ = ["Health", "SubstrateRegistry", "http_prober"]
@@ -191,6 +192,7 @@ class SubstrateRegistry:
         substrate on every turn, and so the *reason* an operator sees in the
         ledger is the transport error rather than a later, vaguer probe failure.
         """
+        METRICS.set("annona_substrate_up", 0, substrate=substrate_id)
         now = self.clock()
         self._cache[substrate_id] = _Cached(
             health=Health.down(reason),
@@ -207,11 +209,13 @@ class SubstrateRegistry:
         route work to a substrate that cannot receive it.
         """
         self._broken[substrate_id] = reason
+        METRICS.set("annona_substrate_up", 0, substrate=substrate_id)
         logger.warning(f"substrate {substrate_id} unavailable for this run: {reason}")
 
     def mark_up(self, substrate_id: str, latency_ms: float = 0.0) -> None:
         """Record a successful real call, clearing any breaker."""
         self._cache[substrate_id] = _Cached(health=Health.ok(latency_ms), at=self.clock())
+        METRICS.set("annona_substrate_up", 1, substrate=substrate_id)
 
     def snapshot(self) -> dict[str, Health]:
         """Health of every registered substrate, for ``annona status``."""

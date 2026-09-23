@@ -26,7 +26,9 @@ authenticated.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -42,6 +44,7 @@ from runner.kernel.types import (
     ToolCall,
     ToolSpec,
     Transcript,
+    Usage,
 )
 
 __all__ = ["DEFAULT_TIMEOUT", "OpenAICompatibleBackend"]
@@ -129,6 +132,7 @@ class OpenAICompatibleBackend:
 
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
 
+        started = time.monotonic()
         try:
             response = self._http().post(
                 f"{self._endpoint}/chat/completions",
@@ -151,7 +155,8 @@ class OpenAICompatibleBackend:
             )
 
         try:
-            return _decode(response.json())
+            data = response.json()
+            return replace(_decode(data), usage=_usage(data, time.monotonic() - started))
         except (ValueError, KeyError, TypeError) as exc:
             raise BackendUnavailableError(
                 f"{self._endpoint} returned a response this adapter cannot read: {exc}"
@@ -286,6 +291,16 @@ def _decode_arguments(raw: Any) -> dict[str, Any]:
         logger.warning(f"openai-compatible: malformed tool arguments, sending none: {raw[:120]}")
         return {}
     return decoded if isinstance(decoded, dict) else {}
+
+
+def _usage(payload: dict[str, Any], seconds: float) -> Usage:
+    """The OpenAI ``usage`` block; vLLM, Vertex (Gemini) and Azure all send it."""
+    usage = payload.get("usage") or {}
+    return Usage(
+        input_tokens=int(usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or 0),
+        seconds=seconds,
+    )
 
 
 def _decode(payload: dict[str, Any]) -> Completion:

@@ -45,6 +45,7 @@ __all__ = [
     "ToolSpec",
     "Transcript",
     "Turn",
+    "Usage",
 ]
 
 # ── Primitive vocabulary ──────────────────────────────────────────────────────
@@ -207,12 +208,33 @@ class CompletionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class Usage:
+    """What one inference cost, as the provider reported it. Numbers only.
+
+    ``generation_seconds`` is the time spent producing output tokens when the
+    provider reports it (Ollama's ``eval_duration``); otherwise the wall time,
+    which also includes reading the prompt and so understates tokens/s.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    seconds: float = 0.0
+    generation_seconds: float = 0.0
+
+    @property
+    def tokens_per_second(self) -> float:
+        span = self.generation_seconds or self.seconds
+        return self.output_tokens / span if span > 0 and self.output_tokens else 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class Completion:
     """The result of one turn of inference, normalised across providers."""
 
     text_parts: tuple[str, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
     stop_reason: StopReason = "end_turn"
+    usage: Usage | None = None
 
     @property
     def text(self) -> str:

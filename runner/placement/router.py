@@ -26,11 +26,13 @@ strength of what it contains rather than on where it came from.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 
 from loguru import logger
 
 from runner.audit.ledger import Ledger
+from runner.audit.metrics import METRICS
 from runner.kernel.blocks import block_text, media_path, text_block
 from runner.kernel.errors import BackendUnavailableError, PlacementHeldError
 from runner.kernel.types import (
@@ -42,6 +44,7 @@ from runner.kernel.types import (
     SensitivityClass,
     ToolCall,
     Turn,
+    Usage,
 )
 from runner.placement.engine import PlacementDecisionEngine
 from runner.placement.registry import SubstrateRegistry
@@ -308,9 +311,65 @@ class RoutingBackend:
                 text=self._render(request),
             )
 
-        completion: Completion = backend.complete(request)  # type: ignore[attr-defined]
-        self._registry.mark_up(substrate_id)
+        model = substrate.model if substrate is not None else ""
+        METRICS.inc("annona_requests_in_flight", 1, substrate=substrate_id)
+        started = time.monotonic()
+        try:
+            completion: Completion = backend.complete(request)  # type: ignore[attr-defined]
+        except BackendUnavailableError:
+            METRICS.inc("annona_inference_failures_total", substrate=substrate_id)
+            raise
+        finally:
+            METRICS.inc("annona_requests_in_flight", -1, substrate=substrate_id)
+
+        usage = completion.usage
+        seconds = usage.seconds if usage and usage.seconds else time.monotonic() - started
+        # The real latency, not 0: the registry's health line used to show only
+        # what the probe measured, never what inference actually took.
+        self._registry.mark_up(substrate_id, seconds * 1000.0)
+        METRICS.observe("annona_inference_seconds", seconds, substrate=substrate_id, model=model)
+        if usage is not None:
+            self._record_usage(substrate_id, model, usage, seconds)
         return completion
+
+    def _record_usage(self, substrate_id: str, model: str, usage: Usage, seconds: float) -> None:
+        """Tokens and time of one inference: in the metrics and, as numbers, the ledger."""
+        METRICS.inc(
+            "annona_tokens_total",
+            usage.input_tokens,
+            substrate=substrate_id,
+            model=model,
+            direction="in",
+        )
+        METRICS.inc(
+            "annona_tokens_total",
+            usage.output_tokens,
+            substrate=substrate_id,
+            model=model,
+            direction="out",
+        )
+        tps = usage.tokens_per_second
+        if tps:
+            METRICS.observe(
+                "annona_output_tokens_per_second", tps, substrate=substrate_id, model=model
+            )
+            METRICS.set(
+                "annona_last_output_tokens_per_second", tps, substrate=substrate_id, model=model
+            )
+        if self._ledger is not None:
+            self._ledger.record(
+                "usage",
+                outcome="completed",
+                klass=self._working_set.klass,
+                substrate=substrate_id,
+                detail={
+                    "model": model,
+                    "tokens_in": usage.input_tokens,
+                    "tokens_out": usage.output_tokens,
+                    "seconds": round(seconds, 3),
+                    "tokens_per_second": round(tps, 2),
+                },
+            )
 
     def _complete_via_brief(
         self,
@@ -555,6 +614,8 @@ class RoutingBackend:
             payload=redaction.text,
             extra={"redacted": redaction.summary(), "redactor": self._redactor.name},
         )
+        for label, count in redaction.summary().items():
+            METRICS.inc("annona_redacted_identifiers_total", count, label=label)
         self._note_egress(
             kind="redacted",
             substrate=onward.substrate,
@@ -625,6 +686,7 @@ class RoutingBackend:
         dies with the process, and exists so the window can show a person the
         text a moment after it left.
         """
+        METRICS.inc("annona_egress_total", kind=kind, substrate=substrate)
         sub = self._registry.get(substrate)
         self._egress.append(
             {

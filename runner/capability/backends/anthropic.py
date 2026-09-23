@@ -14,13 +14,15 @@ builds its own client is an adapter you cannot substitute in a test.
 
 from __future__ import annotations
 
+import time
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
 
 from runner.capability.backends.wire import decode_completion, encode_tools, encode_transcript
 from runner.kernel.errors import BackendUnavailableError
-from runner.kernel.types import Capabilities, Completion, CompletionRequest
+from runner.kernel.types import Capabilities, Completion, CompletionRequest, Usage
 
 __all__ = ["AnthropicBackend"]
 
@@ -77,13 +79,23 @@ class AnthropicBackend:
         # caller; swallowing it would turn a credentials or rate-limit failure
         # into a silently empty answer. Retry and fail-closed policy arrive with
         # the perimeter in Phase 1 — see docs/adr/0002.
+        started = time.monotonic()
         response = self._client.messages.create(**kwargs)
+        seconds = time.monotonic() - started
 
         if response is None:
             logger.error("Anthropic returned no response object")
             raise BackendUnavailableError("Anthropic returned no response")
 
-        return decode_completion(
-            getattr(response, "content", None) or [],
-            getattr(response, "stop_reason", None),
+        usage = getattr(response, "usage", None)
+        return replace(
+            decode_completion(
+                getattr(response, "content", None) or [],
+                getattr(response, "stop_reason", None),
+            ),
+            usage=Usage(
+                input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                seconds=seconds,
+            ),
         )

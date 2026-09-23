@@ -68,6 +68,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from runner.audit.ledger import read_entries, verify_file
+from runner.audit.metrics import METRICS
 from runner.kernel.errors import ConfigurationError, PolicyError
 from runner.kernel.types import ToolCall
 from runner.memory import default_index_path
@@ -534,6 +535,11 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
             "problem": result.problem or "",
             "empty": False,
         }
+
+    @router.get("/metrics")
+    def metrics_json():
+        """The /metrics numbers as JSON, with p50/p95 per histogram, for the UI."""
+        return METRICS.snapshot()
 
     @router.get("/status")
     def kernel_status():

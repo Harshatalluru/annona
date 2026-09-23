@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -43,6 +45,7 @@ from runner.kernel.types import (
     ToolCall,
     ToolSpec,
     Transcript,
+    Usage,
 )
 
 __all__ = ["DEFAULT_ENDPOINT", "OllamaBackend"]
@@ -110,6 +113,7 @@ class OllamaBackend:
         if tools:
             payload["tools"] = tools
 
+        started = time.monotonic()
         try:
             response = self._http().post(f"{self._endpoint}/api/chat", json=payload)
         except httpx.HTTPError as exc:
@@ -130,10 +134,21 @@ class OllamaBackend:
                 f"Ollama returned {response.status_code}: {response.text[:200]}"
             )
 
-        return _decode(response.json())
+        data = response.json()
+        return replace(_decode(data), usage=_usage(data, time.monotonic() - started))
 
     def _http(self) -> Any:
         return self._client or httpx.Client(timeout=self._timeout)
+
+
+def _usage(data: dict[str, Any], seconds: float) -> Usage:
+    """Ollama reports counts and nanoseconds; eval_duration is generation only."""
+    return Usage(
+        input_tokens=int(data.get("prompt_eval_count") or 0),
+        output_tokens=int(data.get("eval_count") or 0),
+        seconds=seconds,
+        generation_seconds=(data.get("eval_duration") or 0) / 1e9,
+    )
 
 
 # ── Wire format ───────────────────────────────────────────────────────────────
