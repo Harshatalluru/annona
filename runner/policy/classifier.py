@@ -48,11 +48,20 @@ def paths_in_text(text: str) -> tuple[str, ...]:
     turn of "summarise /mnt/clients/BG-114.pdf" on a frontier API and only
     discover the problem afterwards.
     """
-    return tuple(
-        match.group(0)
-        for match in _PATH_IN_TEXT.finditer(text or "")
-        if "://" not in match.group(0)
-    )
+    found: list[str] = []
+    for match in _PATH_IN_TEXT.finditer(text or ""):
+        path = match.group(0)
+        if "://" in path:
+            continue
+        found.append(path)
+        # "…sulla cartella /mnt/pratiche/Orione." ends a sentence, and the full
+        # stop is not part of the name. Both spellings are kept rather than
+        # guessing which one is real: classification takes the highest class
+        # either earns, so an extra candidate can only make a run stricter.
+        trimmed = path.rstrip(".-")
+        if trimmed != path and len(trimmed) > 1:
+            found.append(trimmed)
+    return tuple(found)
 
 
 _PATH_KEYS = ("path", "file", "filename", "filepath", "directory", "dir", "target", "source")
