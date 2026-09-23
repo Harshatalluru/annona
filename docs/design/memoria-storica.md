@@ -1,6 +1,25 @@
 # Memoria storica — a sovereign retrieval layer (proposal)
 
-Status: proposal, 2026-09-23. Nothing here is implemented yet.
+Status: steps 1–2 implemented on 2026-09-23 (`runner/memory`, `memory_search`,
+`annona memory index|search|status`, prefetch before the first turn). Steps 3–5
+are still a proposal.
+
+What shipped differs from the plan in three deliberate ways:
+
+- vectors are brute-force cosine in memory (numpy) instead of sqlite-vec — fine to
+  ~100k passages, and no new dependency;
+- the automatic lookup is **strict**: words match only as names and codes, and a
+  passage below cosine 0.5 is not returned. Without it a public question that
+  shares an ordinary word with the memory would pull a sealed passage and seal
+  itself;
+- when the embedder (on the local GPU) is down, the lookup falls back to words
+  only, so the memory keeps warning about conflicts during an outage.
+
+Wiring it exposed a bug in the router: tool calls and tool results were rendered
+as object reprs in the payload the perimeter classifies, so a seal, a canary or a
+restricted path that appeared only in a result was invisible, and redaction sent
+the frontier a transcript without the results. `block_text` fixes both; the tests
+in `tests/test_memory.py` fail without it.
 
 ## Why
 

@@ -358,6 +358,28 @@ class SkillCatalog:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryPolicy:
+    """The company's memory: which folders the local retrieval index covers.
+
+    The index is a copy of those folders in another shape, so it is embedded by
+    a substrate the policy names (``embed_with``) and that substrate must be able
+    to hold the folders' class — an embedder is an egress of the whole corpus,
+    and it goes through placement like any other. See
+    ``docs/design/memoria-storica.md``.
+    """
+
+    folders: tuple[str, ...] = ()
+    embed_with: str = ""
+    model: str = "bge-m3"
+    prefetch: bool = False
+    top_k: int = 6
+
+    @property
+    def active(self) -> bool:
+        return bool(self.folders)
+
+
+@dataclass(frozen=True, slots=True)
 class LinkPolicy:
     """What a linked control plane (Agents Studio) may receive back.
 
@@ -417,6 +439,7 @@ class Policy:
     redaction: RedactionPolicy = field(default_factory=RedactionPolicy)
     skills: SkillPolicy = field(default_factory=SkillPolicy)
     link: LinkPolicy = field(default_factory=LinkPolicy)
+    memory: MemoryPolicy = field(default_factory=MemoryPolicy)
     skill_catalogs: tuple[SkillCatalog, ...] = ()
     source: str = "<memory>"
 

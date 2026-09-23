@@ -8,11 +8,14 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
+from runner.memory import default_index_path
+
 from .base import Tool
 from .browser import BrowserTool
 from .document_reader import DocumentReaderTool
 from .explorer import ExplorerTool
 from .filesystem import FilesystemTool
+from .memory_search import MemorySearchTool
 from .shell import ShellTool
 
 
@@ -43,6 +46,11 @@ class ToolRegistry:
 
         if "explorer" in enabled:
             self.register(ExplorerTool(self.config))
+
+        # Offered once a memory has been indexed on this machine, or when named.
+        # The policy still decides whether it runs: tools are default-deny.
+        if "memory_search" in enabled or default_index_path().exists():
+            self.register(MemorySearchTool(self.config))
 
     def register(self, tool: Tool):
         """Register a tool."""

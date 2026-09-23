@@ -1059,6 +1059,11 @@ from runner.cli_link import register as _register_link  # noqa: E402
 
 _register_link(app)
 
+# The company's memory: a local retrieval index over the folders the policy names.
+from runner.cli_memory import register as _register_memory  # noqa: E402
+
+_register_memory(app)
+
 
 @app.callback(invoke_without_command=True)
 def main_callback(ctx: typer.Context):

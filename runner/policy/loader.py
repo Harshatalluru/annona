@@ -25,6 +25,7 @@ from runner.policy.models import (
     ClassSpec,
     EgressPolicy,
     LinkPolicy,
+    MemoryPolicy,
     Policy,
     Rule,
     SealedSpec,
@@ -309,6 +310,26 @@ def _parse_skill_catalogs(raw: Any) -> tuple[SkillCatalog, ...]:
     return tuple(catalogs)
 
 
+def _parse_memory(raw: Mapping[str, Any]) -> MemoryPolicy:
+    """Parse the ``memory:`` section (see :class:`MemoryPolicy`)."""
+    folders = tuple(str(f) for f in _require_sequence(raw.get("folders"), "memory.folders"))
+    if folders and not raw.get("embed_with"):
+        raise PolicyError("memory.folders is set, but memory.embed_with names no substrate")
+    try:
+        top_k = int(raw.get("top_k", 6))
+    except (TypeError, ValueError) as exc:
+        raise PolicyError(f"memory.top_k: {exc}") from exc
+    if not 1 <= top_k <= 20:
+        raise PolicyError("memory.top_k must be between 1 and 20")
+    return MemoryPolicy(
+        folders=folders,
+        embed_with=str(raw.get("embed_with", "")),
+        model=str(raw.get("model", "bge-m3")),
+        prefetch=bool(raw.get("prefetch", False)),
+        top_k=top_k,
+    )
+
+
 def _parse_link(raw: Mapping[str, Any]) -> LinkPolicy:
     """Parse the ``link:`` section — the ceiling on what goes back to Studio.
 
@@ -438,6 +459,7 @@ def parse_policy(document: Mapping[str, Any], *, source: str = "<memory>") -> Po
         redaction=redaction,
         skills=skills,
         link=_parse_link(_require_mapping(document.get("link"), "link")),
+        memory=_parse_memory(_require_mapping(document.get("memory"), "memory")),
         skill_catalogs=_parse_skill_catalogs(document.get("skill_catalogs")),
         source=source,
     )
@@ -461,6 +483,29 @@ def parse_policy(document: Mapping[str, Any], *, source: str = "<memory>") -> Po
                 raise PolicyError(
                     f"{rule.id} allows '{sid}' for class {rule.klass.label}, but that "
                     f"substrate is capped at {sub.max_class.label}"
+                )
+
+    # The embedder reads every folder of the memory, so it must be allowed to:
+    # an index built by a substrate capped below the folders' class would be the
+    # whole corpus leaving through a side door.
+    if policy.memory.active:
+        memory = policy.memory
+        embedder = policy.substrate(memory.embed_with)
+        if embedder is None:
+            raise PolicyError(
+                f"memory.embed_with names an undeclared substrate: {memory.embed_with!r}"
+            )
+        if embedder.kind.lower() != "ollama":
+            raise PolicyError(
+                f"memory.embed_with must be a local Ollama substrate, not {embedder.kind!r}: "
+                "the embedder reads the whole memory"
+            )
+        for folder in memory.folders:
+            klass = policy.class_for_path(folder.removesuffix("/**")) or policy.default_class
+            if not embedder.can_hold(klass):
+                raise PolicyError(
+                    f"memory folder {folder} is {klass.label}, but '{embedder.id}' is capped "
+                    f"at {embedder.max_class.label}"
                 )
 
     return policy

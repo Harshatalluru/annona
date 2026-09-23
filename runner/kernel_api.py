@@ -70,6 +70,7 @@ from pydantic import BaseModel, Field
 from runner.audit.ledger import read_entries, verify_file
 from runner.kernel.errors import ConfigurationError, PolicyError
 from runner.kernel.types import ToolCall
+from runner.memory import default_index_path
 from runner.pairing import is_this_machine
 from runner.policy.loader import load_policy
 from runner.policy.profiles import (
@@ -680,7 +681,25 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
         # decisions *this* request caused rather than the whole history.
         before = sum(1 for _ in read_entries(ledger)) if ledger.exists() else 0
 
-        prompt, media, reads = _with_attachments(req, _policy_or_none())
+        policy = _policy_or_none()
+        prompt, media, reads = _with_attachments(req, policy)
+        # Ask the company's memory before the first turn, when the policy says so.
+        # A tool call like any other: gated, classified, in the ledger — and the
+        # source paths it returns classify and seal the run from here on.
+        if (
+            policy is not None
+            and policy.memory.active
+            and policy.memory.prefetch
+            and default_index_path().exists()
+        ):
+            reads = [
+                *reads,
+                ToolCall(
+                    id="memory_0",
+                    name="memory_search",
+                    arguments={"query": req.prompt, "top_k": policy.memory.top_k, "strict": True},
+                ),
+            ]
 
         # A run_id makes this run stoppable: register a cancel flag the agent
         # loop polls between turns, and always remove it afterwards so the
