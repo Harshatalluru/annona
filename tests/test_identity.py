@@ -20,9 +20,10 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from runner.audit.ledger import Ledger, verify_file
+from runner.audit.ledger import Ledger, read_entries, verify_file
 from runner.kernel.errors import PolicyError
 from runner.kernel.types import SensitivityClass, Subject, ToolCall
+from runner.kernel_api import _entry_json
 from runner.memory.index import MemoryIndex, roots
 from runner.policy.loader import AKAION_JWKS, parse_policy
 from runner.services.enforcement import Enforcement, MemoryScope
@@ -180,6 +181,9 @@ def test_every_entry_carries_the_subject_inside_the_chain(tmp_path):
     Ledger(path, fsync=False, subject=anna).record(
         "inference", outcome="placed", klass=SensitivityClass.RESTRICTED
     )
+
+    rows = [_entry_json(e) for e in read_entries(path)]
+    assert [(r["subject"], r["groups"]) for r in rows] == [("", []), (anna.id, ["sales"])]
 
     lines = path.read_text().splitlines()
     assert "subject" not in json.loads(lines[0]), "anonymous entries hash as they always did"

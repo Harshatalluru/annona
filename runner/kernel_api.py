@@ -231,6 +231,8 @@ def _entry_json(entry: Any) -> dict[str, Any]:
         "payload_digest": entry.payload_digest,
         "detail": dict(entry.detail),
         "hash": entry.hash,
+        "subject": entry.subject,
+        "groups": list(entry.groups),
     }
 
 
