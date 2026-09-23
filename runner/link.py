@@ -58,6 +58,7 @@ from runner.kernel.types import SensitivityClass
 from runner.policy.classifier import PolicyClassifier
 from runner.policy.loader import load_policy
 from runner.policy.models import Policy, normalise_endpoint
+from runner.services.catalog_http import http_fetch
 from runner.services.enforcement import policy_path
 from runner.skills.catalog import install_from_catalog, installable
 from runner.skills.loader import discover_skills, skills_dirs
@@ -462,7 +463,9 @@ class LinkWorker:
                 }
                 for s in policy.substrates
             ]
-            offered = installable(policy, set(discover_skills()), client=self._catalog_client)
+            offered = installable(
+                policy, set(discover_skills()), fetch=http_fetch(self._catalog_client)
+            )
         except Exception:  # noqa: BLE001 — a broken policy is reported as none
             pass
         return {
@@ -636,7 +639,7 @@ class LinkWorker:
                     f"skill {name!r} is already installed on this machine", catalog=catalog.name
                 )
             installed, entry = install_from_catalog(
-                catalog, name, skills_dirs()[-1], client=self._catalog_client
+                catalog, name, skills_dirs()[-1], fetch=http_fetch(self._catalog_client)
             )
         except ConfigurationError as exc:
             # Catalog and archive errors name URLs and digests, never material.

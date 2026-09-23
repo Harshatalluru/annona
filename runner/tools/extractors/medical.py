@@ -56,7 +56,15 @@ def read_dicom(path: Path, opts: ReadOptions) -> Extraction:
             warnings=(missing_dependency("pydicom", "reading DICOM studies", extra="medical"),),
         )
 
-    dataset = pydicom.dcmread(str(path), force=True)
+    try:
+        dataset = pydicom.dcmread(str(path), force=True)
+    except Exception as exc:  # noqa: BLE001 — a damaged file is a warning, not a crash
+        return Extraction(
+            format="dicom",
+            text=f"=== DICOM: {path.name} ===",
+            metadata={"format": "dicom"},
+            warnings=(f"this file could not be read as a DICOM study: {exc}",),
+        )
 
     metadata: dict[str, Any] = {"format": "dicom"}
     lines = [f"=== DICOM: {path.name} ==="]
@@ -81,12 +89,19 @@ def read_dicom(path: Path, opts: ReadOptions) -> Extraction:
         )
         metadata["preview"] = str(preview)
 
+    warnings = [note] if note else []
+    # `force=True` opens anything, so an empty result is how a file that is not
+    # really DICOM shows up. Saying so is the difference between "this study has
+    # no header" and "you gave me the wrong file".
+    if len(lines) == 1 and not media:
+        warnings.append("no DICOM header fields and no image were found: is this a DICOM study?")
+
     return Extraction(
         format="dicom",
         text="\n".join(lines),
         metadata=metadata,
         media=tuple(media),
-        warnings=(note,) if note else (),
+        warnings=tuple(warnings),
     )
 
 

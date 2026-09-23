@@ -37,17 +37,16 @@ import re
 import tarfile
 import tempfile
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urljoin
 
-import httpx
 from loguru import logger
 
 from runner.kernel.errors import ConfigurationError
-from runner.policy.models import SKILL_NAME, Policy, SkillCatalog, normalise_endpoint
+from runner.policy.models import SKILL_NAME, Policy, SkillCatalog
 from runner.skills.install import InstalledSkill, install_skill
 from runner.skills.loader import load_skill
 
@@ -88,29 +87,10 @@ class CatalogEntry:
 
 _indexes: dict[str, tuple[float, dict[str, CatalogEntry]]] = {}
 
-
-def _get(url: str, limit: int, client: httpx.Client | None) -> bytes:
-    """GET ``url`` over HTTPS, refusing a body larger than ``limit``."""
-    try:
-        normalise_endpoint(url)
-    except ValueError as exc:
-        raise CatalogError(str(exc)) from None
-    http = client or httpx.Client(timeout=FETCH_TIMEOUT)
-    try:
-        with http.stream("GET", url) as response:
-            if response.status_code != 200:
-                raise CatalogError(f"GET {url}: {response.status_code}")
-            body = bytearray()
-            for chunk in response.iter_bytes():
-                body += chunk
-                if len(body) > limit:
-                    raise CatalogError(f"{url} is larger than {limit} bytes")
-            return bytes(body)
-    except httpx.HTTPError as exc:
-        raise CatalogError(f"cannot fetch {url}: {exc}") from exc
-    finally:
-        if client is None:
-            http.close()
+Fetch = Callable[[str, int], bytes]
+"""GET a URL, refusing a body larger than the limit. Supplied by the caller
+(``runner.services.catalog_http.http_fetch``): this layer decides, it does not
+open sockets."""
 
 
 def _parse_index(raw: bytes, url: str) -> dict[str, CatalogEntry]:
@@ -148,14 +128,14 @@ def _parse_index(raw: bytes, url: str) -> dict[str, CatalogEntry]:
 def fetch_index(
     catalog: SkillCatalog,
     *,
-    client: httpx.Client | None = None,
+    fetch: Fetch,
     max_age: float = INDEX_TTL_SECONDS,
 ) -> dict[str, CatalogEntry]:
     """The catalog's entries by name, reused for ``max_age`` seconds."""
     cached = _indexes.get(catalog.url)
     if cached and time.monotonic() - cached[0] < max_age:
         return cached[1]
-    entries = _parse_index(_get(catalog.url, MAX_INDEX_BYTES, client), catalog.url)
+    entries = _parse_index(fetch(catalog.url, MAX_INDEX_BYTES), catalog.url)
     _indexes[catalog.url] = (time.monotonic(), entries)
     return entries
 
@@ -209,7 +189,7 @@ def install_from_catalog(
     name: str,
     destination_dir: str | Path,
     *,
-    client: httpx.Client | None = None,
+    fetch: Fetch,
     force: bool = False,
 ) -> tuple[InstalledSkill, CatalogEntry]:
     """Fetch ``name`` from ``catalog``, verify it, and install it.
@@ -225,11 +205,11 @@ def install_from_catalog(
     """
     # Never the cached index: a digest ten minutes old against an archive
     # published a minute ago would refuse a good install.
-    entry = fetch_index(catalog, client=client, max_age=0).get(name)
+    entry = fetch_index(catalog, fetch=fetch, max_age=0).get(name)
     if entry is None:
         raise CatalogError(f"catalog {catalog.name!r} has no skill named {name!r}")
 
-    archive = _get(entry.archive, MAX_ARCHIVE_BYTES, client)
+    archive = fetch(entry.archive, MAX_ARCHIVE_BYTES)
     digest = hashlib.sha256(archive).hexdigest()
     if digest != entry.sha256:
         raise CatalogError(
@@ -259,7 +239,7 @@ def install_from_catalog(
 
 
 def installable(
-    policy: Policy, installed: Collection[str], *, client: httpx.Client | None = None
+    policy: Policy, installed: Collection[str], *, fetch: Fetch
 ) -> list[dict[str, Any]]:
     """Pre-approved skills a catalog publishes that this machine does not have yet.
 
@@ -271,7 +251,7 @@ def installable(
     offered: list[dict[str, Any]] = []
     for catalog in policy.skill_catalogs:
         try:
-            index = fetch_index(catalog, client=client)
+            index = fetch_index(catalog, fetch=fetch)
         except Exception as exc:  # noqa: BLE001 — never break the heartbeat
             logger.warning(f"skill catalog {catalog.name} unavailable: {exc}")
             continue

@@ -348,7 +348,8 @@ def _parse_link(raw: Mapping[str, Any]) -> LinkPolicy:
         body = _require_mapping(entry, f"link.endpoints[{index}]")
         try:
             url = normalise_endpoint(str(body.get("url", "")))
-            ceiling = SensitivityClass.parse(body.get("release"))
+            # A missing release parses as "" and is refused as an unknown class.
+            ceiling = SensitivityClass.parse(body.get("release") or "")
         except ValueError as exc:
             raise PolicyError(f"link.endpoints[{index}]: {exc}") from exc
         if url in endpoints:

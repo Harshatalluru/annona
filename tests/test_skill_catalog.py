@@ -19,6 +19,7 @@ import pytest
 
 from runner.kernel.errors import ConfigurationError
 from runner.policy.models import SkillCatalog
+from runner.services.catalog_http import http_fetch
 from runner.skills.catalog import CatalogError, fetch_index, install_from_catalog
 from runner.skills.loader import load_skill
 
@@ -97,7 +98,7 @@ def hostile(member: tarfile.TarInfo, data: bytes = b"") -> bytes:
 def test_a_verified_archive_installs_pinned_with_its_provenance(tmp_path: Path):
     archive = build_catalog.tarball(skill_folder(tmp_path))
     installed, entry = install_from_catalog(
-        CATALOG, "rfq-triage", tmp_path / "skills", client=publisher(archive)
+        CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(publisher(archive))
     )
 
     skill = load_skill(tmp_path / "skills" / "rfq-triage")
@@ -114,7 +115,7 @@ def test_a_trusted_catalog_keeps_the_skills_own_pins(tmp_path: Path):
     archive = build_catalog.tarball(skill_folder(tmp_path))
     trusted = SkillCatalog(name="akaion", url=URL, trust=True)
     installed, _ = install_from_catalog(
-        trusted, "rfq-triage", tmp_path / "skills", client=publisher(archive)
+        trusted, "rfq-triage", tmp_path / "skills", fetch=http_fetch(publisher(archive))
     )
     assert not installed.pinned
 
@@ -123,7 +124,10 @@ def test_an_archive_that_does_not_match_its_digest_is_refused(tmp_path: Path):
     archive = build_catalog.tarball(skill_folder(tmp_path))
     with pytest.raises(CatalogError, match="does not match the index"):
         install_from_catalog(
-            CATALOG, "rfq-triage", tmp_path / "skills", client=publisher(archive, sha256="0" * 64)
+            CATALOG,
+            "rfq-triage",
+            tmp_path / "skills",
+            fetch=http_fetch(publisher(archive, sha256="0" * 64)),
         )
     assert not (tmp_path / "skills").exists()
 
@@ -153,7 +157,9 @@ def _hardlink() -> tarfile.TarInfo:
 def test_an_archive_that_reaches_outside_its_folder_is_refused_whole(tmp_path: Path, member):
     archive = hostile(member(), b"#!/bin/sh\n")
     with pytest.raises(CatalogError, match="refused"):
-        install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=publisher(archive))
+        install_from_catalog(
+            CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(publisher(archive))
+        )
     assert not (tmp_path / "skills").exists()
     assert not (tmp_path / "evil.sh").exists()
 
@@ -161,24 +167,28 @@ def test_an_archive_that_reaches_outside_its_folder_is_refused_whole(tmp_path: P
 def test_an_archive_whose_skill_has_another_name_is_refused(tmp_path: Path):
     archive = build_catalog.tarball(skill_folder(tmp_path, front_name="something-else"))
     with pytest.raises(CatalogError, match="another name"):
-        install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=publisher(archive))
+        install_from_catalog(
+            CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(publisher(archive))
+        )
 
 
 def test_an_existing_install_is_not_replaced_without_force(tmp_path: Path):
     client = publisher(build_catalog.tarball(skill_folder(tmp_path)))
-    install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=client)
+    install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(client))
     with pytest.raises(ConfigurationError, match="already exists"):
-        install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=client)
-    install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=client, force=True)
+        install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(client))
+    install_from_catalog(
+        CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(client), force=True
+    )
 
 
 def test_the_index_is_reused_for_heartbeats_and_refetched_for_installs(tmp_path: Path):
     seen: list[str] = []
     client = publisher(build_catalog.tarball(skill_folder(tmp_path)), seen=seen)
-    fetch_index(CATALOG, client=client)
-    fetch_index(CATALOG, client=client)
+    fetch_index(CATALOG, fetch=http_fetch(client))
+    fetch_index(CATALOG, fetch=http_fetch(client))
     assert seen == ["/annona/catalog/index.json"]
-    install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", client=client)
+    install_from_catalog(CATALOG, "rfq-triage", tmp_path / "skills", fetch=http_fetch(client))
     assert seen.count("/annona/catalog/index.json") == 2
 
 
@@ -191,7 +201,7 @@ def test_a_malformed_index_is_refused(body: bytes):
         transport=httpx.MockTransport(lambda r: httpx.Response(200, content=body))
     )
     with pytest.raises(CatalogError):
-        fetch_index(CATALOG, client=client)
+        fetch_index(CATALOG, fetch=http_fetch(client))
 
 
 def test_the_published_catalog_is_what_its_sources_build(tmp_path: Path):

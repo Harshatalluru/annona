@@ -214,7 +214,10 @@ ban-relative-imports = "parents"
 # checked loosely and tightened as they are rewritten.
 # ──────────────────────────────────────────────────────────────────────────────
 [tool.mypy]
-python_version = "3.10"
+# 3.12, not the 3.10 floor: numpy's stubs use 3.12 syntax and a 3.10 target
+# stops mypy at them before it reaches our code. The floor is still enforced —
+# ruff's target-version rejects newer syntax, and CI runs the suite per version.
+python_version = "3.12"
 files = ["runner"]
 exclude = ["^env/", "^build/", "^ui/"]
 warn_unused_configs = true

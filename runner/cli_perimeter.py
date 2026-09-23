@@ -294,6 +294,7 @@ def skills_install(
     """📥 Install a skill somebody else wrote — Claude's, or one from a catalog."""
     from dataclasses import replace
 
+    from runner.services.catalog_http import http_fetch
     from runner.skills.catalog import install_from_catalog
     from runner.skills.install import install_skill
     from runner.skills.loader import skills_dirs
@@ -312,7 +313,11 @@ def skills_install(
             if chosen is None:
                 raise ConfigurationError(f"the policy names no skill catalog {catalog!r}")
             installed, entry = install_from_catalog(
-                replace(chosen, trust=chosen.trust or trust), source, target, force=force
+                replace(chosen, trust=chosen.trust or trust),
+                source,
+                target,
+                fetch=http_fetch(),
+                force=force,
             )
             console.print(f"\n🔏 sha256 {entry.sha256} verified against {chosen.url}")
         else:
