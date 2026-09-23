@@ -62,6 +62,7 @@ if ! curl -sf localhost:11434/api/tags >/dev/null; then (exec nohup ollama serve
 for _ in $(seq 30); do curl -sf localhost:11434/api/tags >/dev/null && break; sleep 1; done
 say "Scarico il modello $MODEL (la prima volta è lungo)"
 ollama pull "$MODEL"
+ollama pull bge-m3   # embedding locale per la memoria storica (multilingue)
 
 # ── Annona ──────────────────────────────────────────────────────────────────
 say "Installo Annona"
@@ -96,8 +97,9 @@ awk -v keep="$FRONTIER" '/^#(VERTEX|ANTHROPIC)$/{skip=(substr($0,2)!=keep); next
         -e "s|__GCP_PROJECT__|${GCP_PROJECT:-}|g" -e "s|__GCP_REGION__|${GCP_REGION:-europe-west1}|g" \
         -e "s|__FRONTIER_MODEL__|${FRONTIER_MODEL:-google/gemini-2.5-flash}|g" \
   > "$ANNONA_HOME/policy.yaml"
-env/bin/annona skills-install catalog/skills/rfq-triage >/dev/null
-env/bin/annona skills-install "$KIT/skills/conflict-check" >/dev/null
+env/bin/annona skills-install --force catalog/skills/rfq-triage >/dev/null
+env/bin/annona skills-install --force "$KIT/skills/conflict-check" >/dev/null
+env/bin/annona memory index
 env/bin/annona policy validate
 case "$FRONTIER" in
   VERTEX)    echo "Frontiera: Vertex AI, progetto $GCP_PROJECT. Serve un login: gcloud auth application-default login" ;;

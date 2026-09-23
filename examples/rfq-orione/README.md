@@ -8,6 +8,8 @@ Una richiesta di offerta per probe card coperta da NDA, e tre esiti:
 
 Cliente, persone, codici fiscali e IBAN in `Pratiche/` sono inventati.
 
+C'è anche un secondo caso, la **memoria storica**: il CEO chiede una bozza di contratto per Nordika Mobility, e solo la memoria dell'azienda (`Pratiche/Memoria-Storica`) sa che Nordika è partner diretto di Veloce Automotive, cliente storico con un NDA che impone di avvisarlo. `setup.sh` indicizza la memoria in locale (`annona memory index`, embedding `bge-m3`); a ogni domanda Annona la interroga prima del primo turno. Prova: `Prepara la bozza di contratto per Nordika Mobility, come chiesto dal CEO.` → il run diventa restricted e sigillato, resta in locale, e il modello si ferma per una decisione del CEO.
+
 ## Installare (una volta)
 
 Mac Apple Silicon o Linux, DGX Spark compreso:

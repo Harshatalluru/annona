@@ -21,19 +21,18 @@ classes:
     patterns:
       - '[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]'          # codice fiscale
       - '\bIT\d{2}[A-Z]\d{10}[0-9A-Z]{12}\b'               # IBAN
-  # Internal = resta in casa. Ci finisce tutto ciò che non è una domanda scritta a
-  # mano: ogni file allegato, ogni file delle cartelle personali, e qualunque testo
-  # che parli di offerte e prezzi. Una proposta commerciale non è «public» solo
-  # perché non sta in una cartella riservata.
+  # Internal = resta in casa. Ci finisce ciò che sta nelle cartelle personali di
+  # lavoro e qualunque testo che parli di offerte, contratti e prezzi: una
+  # proposta commerciale non è «public» solo perché non sta in una cartella
+  # riservata. Gli allegati si classificano per ciò che contengono.
+  # La redazione toglie gli identificativi, non la posizione: un documento
+  # classificato per dove sta resta di quella classe anche redatto.
   internal:
     paths:
-      - __PRATICHE__/Accrediti/**
       - __PRATICHE__/Commerciale/**
       - ~/Pratiche/Commerciale/**
-      - __INBOX__/**
       - ~/Documents/**
       - ~/Downloads/**
-      - ~/Desktop/**
     patterns:
       - '(?i)\b(offerta|preventivo|proposta commerciale|listino|quotazione|iva esclusa|\+\s?iva|contratto|condizioni economiche)\b'
       - '€\s?\d|\d\s?€|\bEUR\s?\d'
@@ -114,5 +113,18 @@ tools:
     # la seconda cartella è dove l'interfaccia mette un file allegato (run.sh esporta ANNONA_INBOX).
     document_reader: [__PRATICHE__/**, __INBOX__/**, ~/Pratiche/**]
     explorer: [__PRATICHE__/**, ~/Pratiche/**]
+    memory_search: [__PRATICHE__/**]
+
+# La memoria storica dell'azienda: indicizzata in locale da bge-m3 su local-gpu,
+# interrogata prima di ogni domanda. Un passaggio recuperato porta con sé il
+# percorso del documento, e con quello la sua classe e il suo sigillo.
+memory:
+  folders:
+    - __PRATICHE__/Memoria-Storica/**
+    - __PRATICHE__/Commerciale/**
+  embed_with: local-gpu
+  model: bge-m3
+  prefetch: true
+  top_k: 6
 
 skills: [rfq-triage, conflict-check]
