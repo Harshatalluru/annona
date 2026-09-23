@@ -1,6 +1,7 @@
 # Annona — policy della demo «Progetto Orione». La scrive setup.sh:
 # __PRATICHE__ diventa il percorso assoluto delle pratiche, __MODEL__ il modello locale,
-# e il blocco FRONTIER resta solo se c'è ANTHROPIC_API_KEY.
+# e resta un solo blocco di frontiera: VERTEX se c'è GCP_PROJECT, ANTHROPIC se c'è
+# ANTHROPIC_API_KEY, nessuno altrimenti.
 #
 # Tre esiti:
 #   1. la pratica Orione è sigillata: gira solo in locale, e se il locale cade si ferma;
@@ -35,7 +36,17 @@ substrates:
     cost_per_mtok: 0.0
     quality: 60
     probe: true
-#FRONTIER
+#VERTEX
+  - id: frontier
+    kind: vertex
+    endpoint: https://__GCP_REGION__-aiplatform.googleapis.com/v1/projects/__GCP_PROJECT__/locations/__GCP_REGION__
+    model: __FRONTIER_MODEL__
+    jurisdiction: eu
+    max_class: public
+    quality: 90
+    probe: true
+#/VERTEX
+#ANTHROPIC
   - id: frontier
     kind: anthropic
     api_key_env: ANTHROPIC_API_KEY
@@ -44,7 +55,7 @@ substrates:
     max_class: public
     quality: 98
     probe: true
-#/FRONTIER
+#/ANTHROPIC
 
 rules:
   - id: R-orione
@@ -67,8 +78,9 @@ egress:
     paths:
       - __PRATICHE__/Progetto-Orione/**
     patterns:
-      - 'Progetto\s+Orione'
+      - 'Progetto[\s_-]*Orione'
       - 'HX-2026-114'
+      - 'ORI-(SPEC|PH)-\d+'
 
 redaction:
   provider: rizzo-pii

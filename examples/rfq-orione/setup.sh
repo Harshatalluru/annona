@@ -86,12 +86,22 @@ say "Scrivo la policy della demo"
 export ANNONA_HOME="$WORK/home"
 mkdir -p "$ANNONA_HOME"
 [ -f "$KIT/.env" ] && set -a && . "$KIT/.env" && set +a
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then PUBLIC="frontier, local-gpu"; KEEP=1; else PUBLIC="local-gpu"; KEEP=0; fi
-awk -v keep="$KEEP" '/^#FRONTIER/{skip=!keep; next} /^#\/FRONTIER/{skip=0; next} !skip' "$KIT/policy.template.yaml" \
+FRONTIER=none
+if [ -n "${GCP_PROJECT:-}" ]; then FRONTIER=VERTEX
+elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then FRONTIER=ANTHROPIC; fi
+if [ "$FRONTIER" = none ]; then PUBLIC="local-gpu"; else PUBLIC="frontier, local-gpu"; fi
+awk -v keep="$FRONTIER" '/^#(VERTEX|ANTHROPIC)$/{skip=(substr($0,2)!=keep); next} /^#\/(VERTEX|ANTHROPIC)$/{skip=0; next} !skip' \
+  "$KIT/policy.template.yaml" \
   | sed -e "s|__PRATICHE__|$KIT/Pratiche|g" -e "s|__MODEL__|$MODEL|g" -e "s|__PUBLIC__|$PUBLIC|g" \
+        -e "s|__GCP_PROJECT__|${GCP_PROJECT:-}|g" -e "s|__GCP_REGION__|${GCP_REGION:-europe-west1}|g" \
+        -e "s|__FRONTIER_MODEL__|${FRONTIER_MODEL:-google/gemini-2.5-flash}|g" \
   > "$ANNONA_HOME/policy.yaml"
 env/bin/annona skills-install catalog/skills/rfq-triage >/dev/null
 env/bin/annona policy validate
-[ "$KEEP" = 1 ] || echo "Nessuna ANTHROPIC_API_KEY: demo solo locale. Mettila in $KIT/.env e rilancia per gli esiti 2 e 3."
+case "$FRONTIER" in
+  VERTEX)    echo "Frontiera: Vertex AI, progetto $GCP_PROJECT. Serve un login: gcloud auth application-default login" ;;
+  ANTHROPIC) echo "Frontiera: API Anthropic." ;;
+  *)         echo "Nessuna frontiera: demo solo locale. Metti GCP_PROJECT (o ANTHROPIC_API_KEY) in $KIT/.env e rilancia per gli esiti 2 e 3." ;;
+esac
 
 say "Pronto. Avvia con: ./run.sh"
