@@ -92,7 +92,7 @@ elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then FRONTIER=ANTHROPIC; fi
 if [ "$FRONTIER" = none ]; then PUBLIC="local-gpu"; else PUBLIC="frontier, local-gpu"; fi
 awk -v keep="$FRONTIER" '/^#(VERTEX|ANTHROPIC)$/{skip=(substr($0,2)!=keep); next} /^#\/(VERTEX|ANTHROPIC)$/{skip=0; next} !skip' \
   "$KIT/policy.template.yaml" \
-  | sed -e "s|__PRATICHE__|$KIT/Pratiche|g" -e "s|__MODEL__|$MODEL|g" -e "s|__PUBLIC__|$PUBLIC|g" \
+  | sed -e "s|__PRATICHE__|$KIT/Pratiche|g" -e "s|__INBOX__|$WORK/inbox|g" -e "s|__MODEL__|$MODEL|g" -e "s|__PUBLIC__|$PUBLIC|g" \
         -e "s|__GCP_PROJECT__|${GCP_PROJECT:-}|g" -e "s|__GCP_REGION__|${GCP_REGION:-europe-west1}|g" \
         -e "s|__FRONTIER_MODEL__|${FRONTIER_MODEL:-google/gemini-2.5-flash}|g" \
   > "$ANNONA_HOME/policy.yaml"

@@ -8,6 +8,7 @@ REPO="$(cd "$KIT/../.." && pwd)"
 WORK="$KIT/.work"
 export PATH="$WORK/bin:$WORK/node/bin:$PATH"
 export ANNONA_HOME="$WORK/home"
+export ANNONA_INBOX="$WORK/inbox"   # gli allegati dall'interfaccia: la policy li autorizza qui
 [ -f "$ANNONA_HOME/policy.yaml" ] || { echo "Prima lancia ./setup.sh"; exit 1; }
 [ -f "$KIT/.env" ] && set -a && . "$KIT/.env" && set +a
 
