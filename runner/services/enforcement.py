@@ -77,10 +77,10 @@ def build_backend(substrate: Substrate, *, secrets: Mapping[str, str] | None = N
 
     Raises:
         ConfigurationError: the substrate names a kind this build does not
-            support, or omits something that kind requires. Fatal on purpose: a
-            substrate that cannot be built must not silently disappear from the
-            candidate set, because its absence would look like a policy decision
-            in the ledger.
+            support, or omits something that kind requires. :meth:`Enforcement.for_run`
+            turns it into "unavailable for this run" on the registry, so the
+            substrate never disappears silently: every placement that would have
+            considered it records the reason among the rejected candidates.
     """
     secrets = secrets or os.environ
     kind = substrate.kind.lower()
@@ -168,10 +168,19 @@ def build_backend(substrate: Substrate, *, secrets: Mapping[str, str] | None = N
         # ponytail: token fetched once per run (backends are built per run);
         # a single run longer than the token's hour would need a refreshing client.
         import google.auth  # noqa: PLC0415
+        import google.auth.exceptions  # noqa: PLC0415
         from google.auth.transport.requests import Request  # noqa: PLC0415
 
-        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        creds.refresh(Request())
+        try:
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            creds.refresh(Request())
+        except google.auth.exceptions.GoogleAuthError as exc:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (vertex) has no valid Google credential ({exc}); "
+                "run `gcloud auth application-default login` or use a service account"
+            ) from exc
         return OpenAICompatibleBackend(
             model=substrate.model,
             endpoint=substrate.endpoint.rstrip("/") + "/endpoints/openapi",
@@ -181,12 +190,75 @@ def build_backend(substrate: Substrate, *, secrets: Mapping[str, str] | None = N
             name=f"vertex:{substrate.id}",
         )
 
+    if kind == "bedrock":
+        # Claude on AWS Bedrock. The region comes from the endpoint, e.g.
+        #   https://bedrock-runtime.eu-central-1.amazonaws.com
+        # and the credential from the standard AWS chain (profile, SSO, role):
+        # nothing secret is ever in the policy.
+        match = re.search(
+            r"bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com", substrate.endpoint
+        )
+        if not match or not substrate.model:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (bedrock) needs a model and an endpoint "
+                "of the form https://bedrock-runtime.<region>.amazonaws.com"
+            )
+        if "anthropic." not in substrate.model:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (bedrock) serves Claude models only; "
+                "reach other Bedrock models through kind: openai-compatible"
+            )
+        try:
+            from anthropic import AnthropicBedrock  # noqa: PLC0415
+
+            client = AnthropicBedrock(aws_region=match.group(1))
+        except ImportError as exc:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (bedrock) needs the AWS extra: pip install 'anthropic[bedrock]'"
+            ) from exc
+        return AnthropicBackend(client=client, model=substrate.model)
+
+    if kind == "azure":
+        # Azure OpenAI / AI Foundry through its OpenAI-compatible v1 surface,
+        #   https://<resource>.openai.azure.com/openai/v1
+        # A key named by api_key_env if there is one, otherwise the machine's
+        # Entra identity (managed identity, az login) — never a key in the file.
+        if not substrate.endpoint or not substrate.model:
+            raise ConfigurationError(
+                f"substrate {substrate.id!r} (azure) needs a model and an endpoint "
+                "of the form https://<resource>.openai.azure.com/openai/v1"
+            )
+        key, _ = credential("AZURE_OPENAI_API_KEY")
+        if not key:
+            try:
+                from azure.identity import DefaultAzureCredential  # noqa: PLC0415
+            except ImportError as exc:
+                raise ConfigurationError(
+                    f"substrate {substrate.id!r} (azure) has no key: set AZURE_OPENAI_API_KEY "
+                    "or install azure-identity to use the machine's Entra identity"
+                ) from exc
+            # ponytail: token fetched once per run, like vertex; a run longer
+            # than the token's lifetime would need a refreshing client.
+            key = (
+                DefaultAzureCredential()
+                .get_token("https://cognitiveservices.azure.com/.default")
+                .token
+            )
+        return OpenAICompatibleBackend(
+            model=substrate.model,
+            endpoint=substrate.endpoint,
+            api_key=key,
+            context_window=substrate.context_window or 128_000,
+            is_local=False,
+            name=f"azure:{substrate.id}",
+        )
+
     if kind == "echo":
         return EchoBackend()
 
     raise ConfigurationError(
         f"substrate {substrate.id!r} declares unknown kind {substrate.kind!r}; "
-        "supported: ollama, openai-compatible, anthropic, vertex, echo"
+        "supported: ollama, openai-compatible, anthropic, vertex, bedrock, azure, echo"
     )
 
 
@@ -308,7 +380,18 @@ class Enforcement:
         ledger = Ledger(ledger_path, run_id=run_id, fsync=fsync)
 
         if backends is None:
-            backends = {s.id: build_backend(s, secrets=secrets) for s in policy.substrates}
+            built: dict[str, Any] = {}
+            for substrate in policy.substrates:
+                # One substrate that cannot be built (an expired cloud login, a
+                # missing key) takes itself out of the run, not the whole
+                # perimeter: it is simply never a candidate, and the rules decide
+                # what happens without it exactly as when a GPU goes down. Still
+                # fail-closed — nothing is placed on a substrate with no adapter.
+                try:
+                    built[substrate.id] = build_backend(substrate, secrets=secrets)
+                except ConfigurationError as exc:
+                    registry.mark_broken(substrate.id, str(exc))
+            backends = built
 
         if redactor is None:
             redactor = build_redactor(policy)

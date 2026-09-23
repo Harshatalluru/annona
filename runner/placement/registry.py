@@ -59,6 +59,14 @@ class Health:
         return cls(False, reason, 0.0)
 
 
+MANAGED_KINDS = frozenset({"anthropic", "vertex", "bedrock", "azure"})
+"""Kinds whose model listing needs the same credential as a real call.
+
+An anonymous ``GET /models`` answers 401 there, which a probe would read as
+"down" while the substrate is perfectly healthy. Their liveness is learned from
+real calls instead, through :meth:`SubstrateRegistry.mark_down`.
+"""
+
 Prober = Callable[[Substrate], Health]
 """Probes one substrate. Injected, so tests never touch the network."""
 
@@ -72,7 +80,7 @@ def http_prober(timeout: float = 2.0) -> Prober:
     """
 
     def probe(substrate: Substrate) -> Health:
-        if not substrate.endpoint:
+        if not substrate.endpoint or substrate.kind.lower() in MANAGED_KINDS:
             return Health.ok()
 
         import httpx  # imported here: L2 must not require an HTTP client to be importable
@@ -122,6 +130,7 @@ class SubstrateRegistry:
     cooloff: float = DEFAULT_COOLOFF_SECONDS
     clock: Callable[[], float] = time.monotonic
     _cache: dict[str, _Cached] = field(default_factory=dict, repr=False)
+    _broken: dict[str, str] = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_substrates(
@@ -150,6 +159,9 @@ class SubstrateRegistry:
         substrate = self.substrates.get(substrate_id)
         if substrate is None:
             return Health.down(f"substrate {substrate_id!r} is not registered")
+
+        if substrate_id in self._broken:
+            return Health.down(self._broken[substrate_id])
 
         now = self.clock()
         cached = self._cache.get(substrate_id)
@@ -186,6 +198,16 @@ class SubstrateRegistry:
             sticky_until=now + self.cooloff,
         )
         logger.warning(f"substrate {substrate_id} marked down for {self.cooloff:.0f}s: {reason}")
+
+    def mark_broken(self, substrate_id: str, reason: str) -> None:
+        """Take a substrate out for the whole run: its adapter could not be built.
+
+        Unlike :meth:`mark_down` this never expires and no probe or successful
+        call clears it, because there is no adapter to call — a later "up" would
+        route work to a substrate that cannot receive it.
+        """
+        self._broken[substrate_id] = reason
+        logger.warning(f"substrate {substrate_id} unavailable for this run: {reason}")
 
     def mark_up(self, substrate_id: str, latency_ms: float = 0.0) -> None:
         """Record a successful real call, clearing any breaker."""

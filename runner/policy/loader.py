@@ -130,7 +130,35 @@ def _parse_substrates(raw: Sequence[Any]) -> tuple[Substrate, ...]:
 
     if not substrates:
         raise PolicyError("a policy must declare at least one substrate")
+    for substrate in substrates:
+        _check_region(substrate)
     return tuple(substrates)
+
+
+# Managed clouds put the processing region in the endpoint itself, so a declared
+# jurisdiction can be checked against where the data will actually go instead of
+# being taken on trust. Kinds whose URL carries no region (Azure, most keyed
+# APIs) keep the operator's word for it.
+_REGION_IN_ENDPOINT = {
+    "vertex": (re.compile(r"/locations/([^/]+)"), ("europe-",)),
+    "bedrock": (re.compile(r"bedrock-runtime(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com"), ("eu-",)),
+}
+
+
+def _check_region(substrate: Substrate) -> None:
+    """Refuse an EU substrate whose endpoint processes data outside the EU."""
+    spec = _REGION_IN_ENDPOINT.get(substrate.kind.lower())
+    if spec is None or substrate.jurisdiction.lower() not in ("eu", "eea"):
+        return
+    pattern, eu_prefixes = spec
+    match = pattern.search(substrate.endpoint)
+    region = match.group(1) if match else ""
+    if not region.startswith(eu_prefixes):
+        raise PolicyError(
+            f"substrate {substrate.id!r} declares jurisdiction {substrate.jurisdiction!r} "
+            f"but its endpoint processes data in {region or 'an unnamed region'!r}: "
+            f"point it at an EU region or declare the jurisdiction it really has"
+        )
 
 
 def _parse_rules(raw: Sequence[Any], known: set[str]) -> tuple[Rule, ...]:
