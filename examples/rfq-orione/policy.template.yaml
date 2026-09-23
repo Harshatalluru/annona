@@ -1,0 +1,84 @@
+# Annona — policy della demo «Progetto Orione». La scrive setup.sh:
+# __PRATICHE__ diventa il percorso assoluto delle pratiche, __MODEL__ il modello locale,
+# e il blocco FRONTIER resta solo se c'è ANTHROPIC_API_KEY.
+#
+# Tre esiti:
+#   1. la pratica Orione è sigillata: gira solo in locale, e se il locale cade si ferma;
+#   2. l'accredito fornitore (CF + IBAN, nessun progetto) può uscire solo redatto;
+#   3. la nota pubblica va al modello migliore.
+
+version: 1
+default: deny
+
+classes:
+  restricted:
+    paths:
+      - __PRATICHE__/Progetto-Orione/**
+    patterns:
+      - '[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]'          # codice fiscale
+      - '\bIT\d{2}[A-Z]\d{10}[0-9A-Z]{12}\b'               # IBAN
+  internal:
+    paths:
+      - __PRATICHE__/Accrediti/**
+  public:
+    default: true
+
+substrates:
+  - id: local-gpu
+    kind: ollama
+    endpoint: http://localhost:11434
+    model: __MODEL__
+    jurisdiction: on-prem
+    max_class: restricted
+    tools: true
+    context_window: 32768
+    cost_per_mtok: 0.0
+    quality: 60
+    probe: true
+#FRONTIER
+  - id: frontier
+    kind: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    model: claude-opus-5
+    jurisdiction: us
+    max_class: public
+    quality: 98
+    probe: true
+#/FRONTIER
+
+rules:
+  - id: R-orione
+    match: {class: restricted}
+    allow: [local-gpu]
+    on_unavailable: redact
+  - id: R-interno
+    match: {class: internal}
+    allow: [local-gpu]
+    on_unavailable: redact
+  - id: R-pubblico
+    match: {class: public}
+    allow: [__PUBLIC__]
+    prefer: quality
+
+egress:
+  redact:
+    allowed_for: [internal, restricted]
+  sealed:
+    paths:
+      - __PRATICHE__/Progetto-Orione/**
+    patterns:
+      - 'Progetto\s+Orione'
+      - 'HX-2026-114'
+
+redaction:
+  provider: rizzo-pii
+  endpoint: http://127.0.0.1:5005
+  on_error: hold
+  floor: public
+
+tools:
+  allow:
+    document_reader: [__PRATICHE__/**]
+    explorer: [__PRATICHE__/**]
+
+skills: [rfq-triage]
