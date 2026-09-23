@@ -17,6 +17,7 @@ import pytest
 
 from runner.agent.loop import AgentLoop
 from runner.audit.ledger import verify_file
+from runner.kernel.blocks import block_text
 from runner.kernel.errors import BackendUnavailableError, PlacementHeldError
 from runner.kernel.types import (
     Capabilities,
@@ -64,10 +65,10 @@ class ScriptedSubstrate:
 
     def complete(self, request: CompletionRequest) -> Completion:
         self.calls += 1
+        # Every block, tool calls and results included: a wiretap that only
+        # read text blocks could not see a secret that arrived in a tool result.
         rendered = "\n".join(
-            str(getattr(block, "content", block))
-            for turn in request.transcript
-            for block in turn.blocks
+            block_text(block) for turn in request.transcript for block in turn.blocks
         )
         self.received.append(request.system + "\n" + rendered)
 

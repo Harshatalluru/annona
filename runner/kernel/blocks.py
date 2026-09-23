@@ -35,6 +35,7 @@ from datapizza.type import (
 from runner.kernel.types import Role, ToolCall, ToolResult, ToolSpec, Turn
 
 __all__ = [
+    "block_text",
     "ToolResultBlock",
     "as_datapizza_tool",
     "encode_result_content",
@@ -135,6 +136,30 @@ def media_path(block: Block) -> str:
     if media is None or getattr(media, "source_type", "") != "path":
         return ""
     return str(getattr(media, "source", ""))
+
+
+def block_text(block: Block) -> str:
+    """What a block puts on the wire, as text the perimeter can classify.
+
+    Every kind of block, not only text. A tool call carries the paths it asks
+    for and a tool result carries what came back — a clause, a codename, the
+    path of the file a passage was retrieved from. Rendering those two as an
+    object repr (``<ToolResultBlock object at 0x…>``) meant the router could not
+    see a seal, a canary or a restricted path that appeared only in a result,
+    and redaction sent the frontier a transcript with the results missing.
+    """
+    path = media_path(block)
+    if path:
+        return path
+    if isinstance(block, FunctionCallResultBlock):
+        return str(block.result)
+    if isinstance(block, FunctionCallBlock):
+        return f"{block.name} {json.dumps(block.arguments, ensure_ascii=False, default=str)}"
+    content = getattr(block, "content", None)
+    if content is None:
+        return str(block)
+    dump = getattr(content, "model_dump_json", None)
+    return str(dump()) if callable(dump) else str(content)
 
 
 def function_call_block(call: ToolCall, spec: ToolSpec | None = None) -> FunctionCallBlock:

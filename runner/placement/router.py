@@ -31,7 +31,7 @@ from collections.abc import Mapping
 from loguru import logger
 
 from runner.audit.ledger import Ledger
-from runner.kernel.blocks import media_path, text_block
+from runner.kernel.blocks import block_text, media_path, text_block
 from runner.kernel.errors import BackendUnavailableError, PlacementHeldError
 from runner.kernel.types import (
     Capabilities,
@@ -286,9 +286,7 @@ class RoutingBackend:
         """
         parts = [request.system]
         for turn in request.transcript:
-            for block in turn.blocks:
-                path = media_path(block)
-                parts.append(path or str(getattr(block, "content", block)))
+            parts.extend(block_text(block) for block in turn.blocks)
         return "\n".join(p for p in parts if p)
 
     def _call(self, substrate_id: str, request: CompletionRequest) -> Completion:
