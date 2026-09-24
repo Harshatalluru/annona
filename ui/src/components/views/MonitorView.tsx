@@ -73,6 +73,12 @@ export function MonitorBody() {
         <div className="an-h4">This machine <span>CPU and memory; what Ollama holds, and how much of it on the GPU</span></div>
         <div className="an-mon-grid">
           <div className="an-mon-card">
+            {h.info && (
+              <div className="an-mon-kv">
+                <span>Chip</span><b>{h.info.chip} · {h.info.arch}</b>
+                <span>Models run on</span><b>{h.info.accelerator}</b>
+              </div>
+            )}
             <Bar label="CPU" ratio={h.cpu} />
             <Bar label="Memory" ratio={h.memory} note={`${bytes(h.used)} of ${bytes(h.total)}`} />
             <div className="an-mon-kv"><span>Annona daemon</span><b>{bytes(h.daemon)}</b></div>

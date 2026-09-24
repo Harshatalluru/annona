@@ -10,7 +10,11 @@ docs/design/observability.md, O3). What Ollama holds on the GPU is: /api/ps.
 
 from __future__ import annotations
 
+import platform
+import shutil
+import subprocess
 from collections.abc import Iterable
+from functools import cache
 
 import httpx
 import psutil
@@ -37,6 +41,34 @@ def _ollama_endpoints() -> list[str]:
     )
 
 
+def _run(*cmd: str) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=2).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+@cache
+def machine() -> dict[str, str]:
+    """What the machine is and where a local model runs. It does not change, so once."""
+    os_, arch = platform.system(), platform.machine().lower()
+    chip = platform.processor() or arch
+    if os_ == "Darwin":
+        chip = _run("sysctl", "-n", "machdep.cpu.brand_string") or chip
+        accelerator = (
+            "Apple GPU · Metal · unified memory"
+            if arch == "arm64"
+            else "CPU (Intel Mac, no Metal offload)"
+        )
+    elif shutil.which("nvidia-smi") and (
+        gpu := _run("nvidia-smi", "--query-gpu=name", "--format=csv,noheader")
+    ):
+        accelerator = f"NVIDIA {gpu.splitlines()[0]} · CUDA"
+    else:
+        accelerator = "CPU only"
+    return {"os": os_, "arch": arch, "chip": chip, "accelerator": accelerator}
+
+
 def sample(ollama_endpoints: Iterable[str] | None = None) -> None:
     """Refresh the host and Ollama gauges in the process registry."""
     if ollama_endpoints is None:
@@ -46,6 +78,7 @@ def sample(ollama_endpoints: Iterable[str] | None = None) -> None:
     METRICS.set("annona_host_memory_bytes", memory.total - memory.available, kind="used")
     METRICS.set("annona_host_memory_bytes", memory.total, kind="total")
     METRICS.set("annona_process_resident_bytes", psutil.Process().memory_info().rss)
+    METRICS.set("annona_host_info", 1, **machine())
 
     # A model Ollama evicted must disappear, not linger at its last size.
     METRICS.clear("annona_ollama_loaded_bytes")

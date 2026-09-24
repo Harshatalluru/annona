@@ -57,6 +57,7 @@ export function host(m: Metrics | null) {
     used,
     total,
     daemon: one(m, "process_resident_bytes")?.value ?? null,
+    info: one(m, "host_info")?.labels ?? null,
   }
 }
 

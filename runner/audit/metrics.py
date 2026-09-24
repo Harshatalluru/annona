@@ -96,6 +96,12 @@ FAMILIES = {
         Family("annona_host_memory_bytes", "gauge", "Machine memory.", ("kind",)),
         Family("annona_process_resident_bytes", "gauge", "Memory held by the daemon."),
         Family(
+            "annona_host_info",
+            "gauge",
+            "Always 1: the chip, and what a local model runs on.",
+            ("os", "arch", "chip", "accelerator"),
+        ),
+        Family(
             "annona_ollama_loaded_bytes",
             "gauge",
             "Models Ollama holds in memory, and how much of each is on the GPU.",

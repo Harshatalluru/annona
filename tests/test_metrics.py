@@ -158,6 +158,7 @@ def test_host_sample_and_an_evicted_model_disappears(monkeypatch):
     text = METRICS.prometheus()
     assert 'annona_ollama_loaded_bytes{model="qwen2.5:14b",kind="gpu"} 6000000000' in text
     assert 'annona_host_memory_bytes{kind="total"}' in text and "annona_host_cpu_ratio " in text
+    assert f'accelerator="{host.machine()["accelerator"]}"}} 1' in text
 
     loaded.clear()
     host.sample(["http://localhost:11434"])
