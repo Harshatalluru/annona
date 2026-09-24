@@ -23,7 +23,9 @@ const quiet = { borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255
 export default function AccountBlock({ identity, sync, busy, onSignIn, onSignOut }: Props) {
   const you = identity?.you
   const synced = !!sync?.authenticated
-  const canSignIn = !identity || identity.providers.length === 0 || identity.providers.some((p) => p.signin)
+  // A policy with no identity provider names nobody, whoever signed in.
+  const checksIdentity = !!identity && identity.providers.length > 0
+  const canSignIn = checksIdentity ? identity.providers.some((p) => p.signin) : !synced
 
   if (you) {
     return (
@@ -66,9 +68,11 @@ export default function AccountBlock({ identity, sync, busy, onSignIn, onSignOut
         <span style={{ fontSize: 12, fontWeight: 500 }}>Anonymous</span>
       </div>
       <div style={muted}>
-        {synced
-          ? `Notes sync as ${sync?.email ?? "you"}, but this window's requests are unsigned — open Annona in your browser to sign them.`
-          : "Decisions are recorded without a name. Notes stay on this machine."}
+        {!checksIdentity
+          ? `This perimeter's policy checks no identity, so decisions are recorded without a name.${synced ? ` Notes sync as ${sync?.email ?? "you"}.` : ""}`
+          : synced
+            ? `Notes sync as ${sync?.email ?? "you"}, but this window's requests are unsigned — sign in here to put your name on them.`
+            : "Decisions are recorded without a name. Notes stay on this machine."}
       </div>
       {canSignIn && (
         <button className="ak-cloud-badge__cta" onClick={onSignIn} disabled={busy}>

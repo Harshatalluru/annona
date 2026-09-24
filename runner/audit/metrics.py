@@ -92,6 +92,15 @@ FAMILIES = {
             "Identifiers replaced before egress.",
             ("label",),
         ),
+        Family("annona_host_cpu_ratio", "gauge", "Machine CPU in use, 0 to 1."),
+        Family("annona_host_memory_bytes", "gauge", "Machine memory.", ("kind",)),
+        Family("annona_process_resident_bytes", "gauge", "Memory held by the daemon."),
+        Family(
+            "annona_ollama_loaded_bytes",
+            "gauge",
+            "Models Ollama holds in memory, and how much of each is on the GPU.",
+            ("model", "kind"),
+        ),
         Family(
             "annona_substrate_up",
             "gauge",
@@ -162,6 +171,11 @@ class Metrics:
         _, key = self._key(name, labels)
         with self._lock:
             self._values.setdefault(name, {})[key] = value
+
+    def clear(self, name: str) -> None:
+        """Drop every series of one gauge: for sets whose members come and go."""
+        with self._lock:
+            self._values.pop(name, None)
 
     def observe(self, name: str, value: float, /, **labels: str) -> None:
         family, key = self._key(name, labels)

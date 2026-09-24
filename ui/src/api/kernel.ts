@@ -126,6 +126,20 @@ export interface Decision {
   groups?: string[]
 }
 
+/** One series of the metrics registry: a gauge/counter value, or a histogram summary. */
+export interface MetricRow {
+  labels: Record<string, string>
+  value?: number
+  count?: number
+  sum?: number
+  mean?: number | null
+  p50?: number | null
+  p95?: number | null
+}
+
+/** `GET /api/kernel/metrics`: every family, since the daemon started. */
+export type Metrics = Record<string, MetricRow[]>
+
 /** Who this window is, as the perimeter verified it — `whoami`, not a guess. */
 export interface Identity {
   /** The policy refuses anonymous requests. */
@@ -307,6 +321,7 @@ export const kernel = {
     )
   },
   identity:   () => req<Identity>("/identity"),
+  metrics:    () => req<Metrics>("/metrics"),
   verify:     () => req<{ path: string; ok: boolean; entries: number; problem: string; empty: boolean }>(
     "/ledger/verify",
   ),

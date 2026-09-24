@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useRunner } from "./hooks/useRunner";
-import { AskIcon, PerimeterIcon, InboxIcon, BrainIcon, SyncIcon, TasksIcon, SettingsIcon } from "./components/ui/Icons";
+import { AskIcon, PerimeterIcon, MonitorIcon, InboxIcon, BrainIcon, SyncIcon, TasksIcon, SettingsIcon } from "./components/ui/Icons";
 import AskView       from "./components/views/AskView";
 import PerimeterView from "./components/views/PerimeterView";
 import InboxView     from "./components/views/InboxView";
@@ -15,11 +15,14 @@ import { auth as authApi, runner as runnerApi, sync as syncApi, AuthStatus, Runn
 import { API_ORIGIN } from "./api/base";
 import { kernel as kernelApi, Identity } from "./api/kernel";
 import AccountBlock from "./components/auth/AccountBlock";
+import MetricsPulse from "./components/MetricsPulse";
+import MonitorView from "./components/views/MonitorView";
+import MonitorDrawer from "./components/MonitorDrawer";
 import { fbAuth, signOut } from "./lib/firebase";
 import "./App.css";
 import "./css/auth-animations.css";
 
-type View = "ask" | "perimeter" | "inbox" | "brain" | "sync" | "tasks"
+type View = "ask" | "perimeter" | "monitor" | "inbox" | "brain" | "sync" | "tasks"
 
 // The kernel first, the vault second. What somebody installed this for is
 // deciding where their work runs; the notes are what the previous product did.
@@ -31,6 +34,7 @@ type View = "ask" | "perimeter" | "inbox" | "brain" | "sync" | "tasks"
 const NAV: { id: View; label: string; icon: React.FC<{ size?: number }>; section: string }[] = [
   { id: "ask",       label: "Ask",       icon: AskIcon,       section: "Kernel" },
   { id: "perimeter", label: "Perimeter", icon: PerimeterIcon, section: "Kernel" },
+  { id: "monitor",   label: "Monitor",   icon: MonitorIcon,   section: "Kernel" },
   { id: "inbox",     label: "Inbox",     icon: InboxIcon,     section: "Kernel" },
   { id: "brain",     label: "Notes",     icon: BrainIcon,     section: "Workspace" },
   { id: "sync",      label: "Sync",      icon: SyncIcon,      section: "Workspace" },
@@ -44,6 +48,7 @@ function readOnboardingDone(): boolean {
 export default function App() {
   const { status, start } = useRunner();
   const [view, setView]               = useState<View>("ask");
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const [authStatus, setAuthStatus]   = useState<AuthStatus | null>(null);
   const [mode, setMode]               = useState<RunnerMode | null>(null);
   const [bootChecked, setBootChecked] = useState(false);
@@ -343,8 +348,13 @@ export default function App() {
           </div>
         ) : (
           <>
-            {view === "ask"       && <AskView />}
+            <div className="an-topbar">
+              <MetricsPulse onOpen={() => setMonitorOpen(true)} />
+            </div>
+            {/* Kept mounted: leaving Ask must not throw the conversation away. */}
+            <div style={{ display: view === "ask" ? "contents" : "none" }}><AskView /></div>
             {view === "perimeter" && <PerimeterView />}
+            {view === "monitor"   && <MonitorView />}
             {view === "inbox"     && <InboxView />}
             {view === "brain"   && <BrainView />}
             {view === "sync"    && <SyncView />}
@@ -352,6 +362,13 @@ export default function App() {
           </>
         )}
       </main>
+
+      {monitorOpen && (
+        <MonitorDrawer
+          onClose={() => setMonitorOpen(false)}
+          onFullPage={() => { setMonitorOpen(false); setView("monitor"); }}
+        />
+      )}
 
       {/* Status bar */}
       <footer className="ak-statusbar">

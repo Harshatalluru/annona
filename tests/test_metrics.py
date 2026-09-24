@@ -139,3 +139,39 @@ def test_metrics_endpoint_and_its_optional_token(tmp_path, monkeypatch):
     monkeypatch.setenv("ANNONA_METRICS_TOKEN", "s3cret")
     assert client.get("/metrics").status_code == 401
     assert client.get("/metrics", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+
+
+# ── The machine ──────────────────────────────────────────────────────────────
+
+
+def test_host_sample_and_an_evicted_model_disappears(monkeypatch):
+    from runner.services import host
+
+    loaded = [{"name": "qwen2.5:14b", "size": 9e9, "size_vram": 6e9}]
+
+    class Answer:
+        def json(self):
+            return {"models": list(loaded)}
+
+    monkeypatch.setattr(host.httpx, "get", lambda url, timeout: Answer())
+    host.sample(["http://localhost:11434/v1"])
+    text = METRICS.prometheus()
+    assert 'annona_ollama_loaded_bytes{model="qwen2.5:14b",kind="gpu"} 6000000000' in text
+    assert 'annona_host_memory_bytes{kind="total"}' in text and "annona_host_cpu_ratio " in text
+
+    loaded.clear()
+    host.sample(["http://localhost:11434"])
+    assert "qwen2.5:14b" not in METRICS.prometheus()
+
+
+def test_a_managed_substrate_that_failed_is_reported_down_with_its_reason(tmp_path):
+    from runner.kernel.types import SensitivityClass
+    from runner.placement.registry import LAST_DOWN, SubstrateRegistry
+    from runner.policy.models import Substrate
+
+    sub = Substrate(id="frontier", kind="vertex", max_class=SensitivityClass.PUBLIC)
+    registry = SubstrateRegistry.from_substrates((sub,), prober=None)
+    registry.mark_broken("frontier", "no valid Google credential")
+    assert LAST_DOWN["frontier"] == "no valid Google credential"
+    registry.mark_up("frontier", 120.0)
+    assert "frontier" not in LAST_DOWN

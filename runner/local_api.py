@@ -40,6 +40,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from runner.audit.metrics import METRICS
+from runner.services.host import sample as sample_host
 
 from .auth import AuthManager
 from .brain.manager import BrainManager
@@ -146,6 +147,7 @@ def create_app(
         token = os.getenv("ANNONA_METRICS_TOKEN", "")
         if token and not secrets.compare_digest(authorization, f"Bearer {token}"):
             raise HTTPException(status_code=401, detail="metrics token required")
+        sample_host()
         return PlainTextResponse(METRICS.prometheus(), media_type="text/plain; version=0.0.4")
 
     # ── Auth ──────────────────────────────────────────────────────────────────

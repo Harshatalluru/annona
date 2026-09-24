@@ -84,6 +84,7 @@ from runner.policy.profiles import (
 )
 from runner.services import attachments as inbox
 from runner.services.enforcement import policy_path
+from runner.services.host import sample as sample_host
 from runner.services.identity import IdentityError, authenticate
 from runner.tools.extractors import capabilities, supported_extensions
 
@@ -491,7 +492,7 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
     @router.get("/substrates")
     def get_substrates(probe: bool = Query(True, description="Check liveness over HTTP")):
         """What is registered, where it is, and whether it answers right now."""
-        from runner.placement.registry import SubstrateRegistry, http_prober
+        from runner.placement.registry import LAST_DOWN, Health, SubstrateRegistry, http_prober
 
         policy, _ = _load_policy_or_404()
         registry = SubstrateRegistry.from_substrates(
@@ -500,6 +501,10 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
         out = []
         for sid, health in registry.snapshot().items():
             sub = registry.substrates[sid]
+            # A probe that actually ran is the newest word; a substrate that is
+            # never probed (managed clouds) is only known by its last real call.
+            if sid in LAST_DOWN and not (probe and health.latency_ms):
+                health = Health.down(LAST_DOWN[sid])
             out.append(
                 {
                     "id": sid,
@@ -601,6 +606,7 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
     @router.get("/metrics")
     def metrics_json():
         """The /metrics numbers as JSON, with p50/p95 per histogram, for the UI."""
+        sample_host()
         return METRICS.snapshot()
 
     @router.get("/status")

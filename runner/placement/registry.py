@@ -34,7 +34,16 @@ from loguru import logger
 from runner.audit.metrics import METRICS
 from runner.policy.models import Substrate
 
-__all__ = ["Health", "SubstrateRegistry", "http_prober"]
+__all__ = ["LAST_DOWN", "Health", "SubstrateRegistry", "http_prober"]
+
+LAST_DOWN: dict[str, str] = {}
+"""Why each substrate last went down, for as long as the process lives.
+
+A registry is built per run, so without this the reason died with the run and
+anything asking afterwards — the Monitor, ``/api/kernel/substrates`` — saw a
+managed substrate that is never probed (Vertex, Bedrock) as up. Cleared by the
+next real call that succeeds.
+"""
 
 DEFAULT_TTL_SECONDS = 10.0
 """How long a probe result is trusted. Short: this is a liveness answer."""
@@ -193,6 +202,7 @@ class SubstrateRegistry:
         ledger is the transport error rather than a later, vaguer probe failure.
         """
         METRICS.set("annona_substrate_up", 0, substrate=substrate_id)
+        LAST_DOWN[substrate_id] = reason
         now = self.clock()
         self._cache[substrate_id] = _Cached(
             health=Health.down(reason),
@@ -210,12 +220,14 @@ class SubstrateRegistry:
         """
         self._broken[substrate_id] = reason
         METRICS.set("annona_substrate_up", 0, substrate=substrate_id)
+        LAST_DOWN[substrate_id] = reason
         logger.warning(f"substrate {substrate_id} unavailable for this run: {reason}")
 
     def mark_up(self, substrate_id: str, latency_ms: float = 0.0) -> None:
         """Record a successful real call, clearing any breaker."""
         self._cache[substrate_id] = _Cached(health=Health.ok(latency_ms), at=self.clock())
         METRICS.set("annona_substrate_up", 1, substrate=substrate_id)
+        LAST_DOWN.pop(substrate_id, None)
 
     def snapshot(self) -> dict[str, Health]:
         """Health of every registered substrate, for ``annona status``."""
