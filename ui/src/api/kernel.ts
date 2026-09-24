@@ -5,6 +5,7 @@
 // them with note CRUD would bury the one part of the app that is the product.
 
 import { API_ORIGIN } from "./base"
+import { fbAuth } from "../lib/firebase"
 
 const BASE = `${API_ORIGIN}/api/kernel`
 
@@ -14,10 +15,27 @@ export class KernelError extends Error {
   }
 }
 
+/**
+ * Who is asking, when someone signed in in this browser.
+ *
+ * The same sign-in as cloud sync (Firebase, `akaion-prod-eu`): its ID token is
+ * what a policy's `identity: {preset: akaion}` verifies, so the ledger records
+ * the person instead of "anonymous". Firebase refreshes the token itself. Not
+ * signed in — or the desktop app, which signs in through the browser — sends
+ * nothing, and the policy decides whether anonymous is allowed. A refresh that
+ * fails throws rather than quietly downgrading to anonymous.
+ */
+async function identity(): Promise<Record<string, string>> {
+  await fbAuth.authStateReady()
+  const user = fbAuth.currentUser
+  return user ? { Authorization: `Bearer ${await user.getIdToken()}` } : {}
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers, ...rest } = init ?? {}
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...init,
+    headers: { "Content-Type": "application/json", ...(await identity()), ...(headers as Record<string, string>) },
+    ...rest,
   })
   if (!res.ok) {
     // FastAPI puts the useful sentence in `detail`; surfacing "422" alone would
@@ -103,6 +121,19 @@ export interface Decision {
   payload_digest: string
   detail: Record<string, any>
   hash: string
+  /** Who asked, as the identity provider proved it. Empty: anonymous. */
+  subject?: string
+  groups?: string[]
+}
+
+/** Who this window is, as the perimeter verified it — `whoami`, not a guess. */
+export interface Identity {
+  /** The policy refuses anonymous requests. */
+  required: boolean
+  providers: { kind: string; label: string; signin: string }[]
+  you: { id: string; groups: string[]; via: string; verified_by: string } | null
+  /** Why the credential this window sent was refused, if it was. */
+  problem: string
 }
 
 /** One payload that left this machine. Held in memory by the daemon, never on disk. */
@@ -275,6 +306,7 @@ export const kernel = {
       `/ledger${q ? `?${q}` : ""}`,
     )
   },
+  identity:   () => req<Identity>("/identity"),
   verify:     () => req<{ path: string; ok: boolean; entries: number; problem: string; empty: boolean }>(
     "/ledger/verify",
   ),

@@ -170,7 +170,7 @@ function LedgerPanel({
 
       <table className="an-table an-table--mono">
         <thead>
-          <tr><th>#</th><th>when</th><th>step</th><th>kind</th><th>class</th><th>outcome</th><th>where</th><th>why</th></tr>
+          <tr><th>#</th><th>when</th><th>step</th><th>kind</th><th>class</th><th>outcome</th><th>where</th><th>who</th><th>why</th></tr>
         </thead>
         <tbody>
           {[...entries].reverse().map((d) => {
@@ -184,6 +184,7 @@ function LedgerPanel({
                 <td style={{ color: classTone(d.class) }}>{d.class}</td>
                 <td style={{ color: held ? "var(--red)" : "var(--green)" }}>{d.outcome}</td>
                 <td>{d.substrate || "—"}</td>
+                <td className="an-dim" title={d.groups?.join(", ")}>{d.subject || "anonymous"}</td>
                 <td className="an-dim">{String(d.detail?.reason ?? d.rule_id ?? "")}</td>
               </tr>
             )

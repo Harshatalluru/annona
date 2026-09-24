@@ -59,8 +59,10 @@ replacing are different acts and the second one is the one that needs the record
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -208,6 +210,25 @@ def _cancel_run(run_id: str) -> bool:
 
 def _ledger_path() -> Path:
     return policy_path().parent / "ledger.jsonl"
+
+
+AKAION_ISSUER = "https://securetoken.google.com/"
+
+
+def _via_label(via: str) -> str:
+    """A name a person recognises for whoever proved the subject."""
+    if via == "proxy":
+        return "your organisation's sign-in"
+    issuer = via.removeprefix("jwt:")
+    return "Akaion" if issuer.startswith(AKAION_ISSUER) else urlparse(issuer).hostname or issuer
+
+
+def _provider_label(provider: Any) -> dict[str, str]:
+    via = "proxy" if provider.kind == "proxy" else f"jwt:{provider.issuer}"
+    # The window can sign in itself only with Akaion; any other provider is
+    # reached through the company's proxy or its own app.
+    signin = "akaion" if provider.issuer.startswith(AKAION_ISSUER) else ""
+    return {"kind": provider.kind, "label": _via_label(via), "signin": signin}
 
 
 def _entry_json(entry: Any) -> dict[str, Any]:
@@ -537,6 +558,44 @@ def kernel_router(executor: Any | None = None) -> APIRouter:
             "entries": result.entries,
             "problem": result.problem or "",
             "empty": False,
+        }
+
+    @router.get("/identity")
+    def identity(request: Request):
+        """Who this request is, as the perimeter sees it — ``whoami``, not a guess.
+
+        The window shows this, never what its own sign-in believes: a token
+        the policy does not accept is shown as refused, with the reason, so
+        "signed in" on screen always means "signed" in the ledger. A status
+        query, so a refusal is 200 with ``problem``, not 401.
+        """
+        policy = _policy_or_none()
+        if policy is None:
+            return {"required": False, "providers": [], "you": None, "problem": ""}
+        providers = [_provider_label(p) for p in policy.identity.providers]
+        try:
+            # No credential is not a refusal here: `required` already says so.
+            who = authenticate(replace(policy.identity, required=False), request.headers)
+        except IdentityError as exc:
+            return {
+                "required": policy.identity.required,
+                "providers": providers,
+                "you": None,
+                "problem": str(exc),
+            }
+        you = None
+        if not who.anonymous:
+            you = {
+                "id": who.id,
+                "groups": list(policy.groups_of(who)),
+                "via": who.via,
+                "verified_by": _via_label(who.via),
+            }
+        return {
+            "required": policy.identity.required,
+            "providers": providers,
+            "you": you,
+            "problem": "",
         }
 
     @router.get("/metrics")

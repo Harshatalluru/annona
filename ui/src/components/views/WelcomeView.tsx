@@ -11,10 +11,13 @@
 import { useState } from "react";
 import { signIn, isSigninHandoff, signInWithGoogle } from "../../lib/signin";
 import { AuthStatus } from "../../api/runner";
+import type { Identity } from "../../api/kernel";
 import AuthLogo from "../auth/AuthLogo";
 import SocialButton from "../auth/SocialButton";
 
 interface Props {
+  /** What the perimeter says about identity: required, by whom, and who we are. */
+  identity?: Identity | null;
   /** Path to the local vault (footer info, e.g. ~/akaion-brain) */
   vaultPath?: string;
   /** Called when the user picks local-only ("Open my vault") */
@@ -25,7 +28,14 @@ interface Props {
 
 export const ONBOARDING_FLAG = "akaion_onboarding_done";
 
-export default function WelcomeView({ vaultPath = "~/akaion-brain", onSkip, onLogin }: Props) {
+export default function WelcomeView({ identity, vaultPath = "~/akaion-brain", onSkip, onLogin }: Props) {
+  // Managed mode, like a work profile: the organisation's policy says who may
+  // use this perimeter, so there is no "continue without an account".
+  const required = !!identity?.required && !identity.you;
+  const provider = identity?.providers.find((p) => p.signin) ?? null;
+  const signInLabel = required
+    ? `Sign in with ${provider?.label ?? "your account"}`
+    : "Sign in (optional)";
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [handoffDone, setHandoffDone] = useState(false);
@@ -90,7 +100,17 @@ export default function WelcomeView({ vaultPath = "~/akaion-brain", onSkip, onLo
           subtitle="Where it runs is a decision"
         />
 
-        {!isSigninHandoff() && (
+        {required && (
+          <div className="ak-auth-note">
+            <strong>This perimeter is managed by your organisation.</strong><br />
+            Every decision it takes is recorded under the name of whoever asked,
+            so it needs to know who you are. Your sign-in stays in this browser;
+            the ledger keeps only your email and groups — never the token.
+            {!provider && <><br />Sign in through your organisation&apos;s portal, then reload this page.</>}
+          </div>
+        )}
+
+        {!isSigninHandoff() && !required && (
         <button
           className="ak-btn-primary"
           onClick={handleSkip}
@@ -102,7 +122,7 @@ export default function WelcomeView({ vaultPath = "~/akaion-brain", onSkip, onLo
         </button>
         )}
 
-        {!isSigninHandoff() && <div className="ak-or-divider">or</div>}
+        {!isSigninHandoff() && !required && <div className="ak-or-divider">or</div>}
 
         {isSigninHandoff() && !handoffDone && (
           <div className="ak-auth-note">
@@ -111,13 +131,13 @@ export default function WelcomeView({ vaultPath = "~/akaion-brain", onSkip, onLo
           </div>
         )}
 
-        {!handoffDone && (
+        {!handoffDone && (!required || provider) && (
           <SocialButton
             provider="google"
             variant="full"
             isLoading={loading}
             onClick={isSigninHandoff() ? handleHandoff : handleGoogle}
-            label={isSigninHandoff() ? "Continue with Google" : "Sign in to sync (optional)"}
+            label={isSigninHandoff() ? "Continue with Google" : signInLabel}
           />
         )}
 
@@ -135,9 +155,15 @@ export default function WelcomeView({ vaultPath = "~/akaion-brain", onSkip, onLo
 
         {error && <div className="ak-auth-error">{error}</div>}
 
+        {identity?.problem && (
+          <div className="ak-auth-error">This perimeter did not accept your sign-in: {identity.problem}</div>
+        )}
+
         <p className="ak-welcome-footer">
           Local vault: <code>{vaultPath}</code><br />
-          Your notes stay on this machine. Cloud sign-in is optional.
+          {required
+            ? "Your work runs where the policy says. Signing in names you; it does not send your files anywhere."
+            : "Signing in puts your name on the decisions you cause and syncs your notes. Without it, everything still works — anonymously."}
         </p>
       </div>
     </div>

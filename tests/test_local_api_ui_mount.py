@@ -110,3 +110,14 @@ def test_static_mount_does_not_shadow_api(tmp_path):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["service"] == "annona"
+
+
+def test_index_is_revalidated_so_an_update_reaches_the_window(tmp_path):
+    ui = tmp_path / "dist"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text('<script src="assets/index-abc.js"></script>')
+    (ui / "assets" / "index-abc.js").write_text("1")
+    client = TestClient(_build_app(tmp_path, ui))
+
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert "cache-control" not in client.get("/assets/index-abc.js").headers

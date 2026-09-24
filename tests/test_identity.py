@@ -328,3 +328,34 @@ def test_for_run_narrows_the_policy_and_stamps_the_ledger(tmp_path):
     enforcement.ledger.record("run", outcome="started", klass=SensitivityClass.PUBLIC)
     entry = json.loads((tmp_path / "ledger.jsonl").read_text())
     assert (entry["subject"], entry["groups"]) == ("anna@acme.example", ["sales"])
+
+
+# ── whoami: what the window shows is what the perimeter verified ─────────────
+
+
+def test_whoami_reports_the_verified_subject_not_the_windows_belief(home, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("ANNONA_PROXY_SECRET", "s3cret")
+    write_policy(
+        home,
+        POLICY
+        + "\nidentity:\n  required: true\n  providers:\n"
+        + "    - {kind: proxy, secret_env: ANNONA_PROXY_SECRET}\n"
+        + "    - {preset: akaion, project: akaion-prod-eu}\n"
+        + "groups:\n  sales: ['*@acme.example']\n",
+    )
+    client = client_for(None)
+
+    nobody = client.get("/api/kernel/identity").json()
+    assert (nobody["required"], nobody["you"], nobody["problem"]) == (True, None, "")
+    assert [p["label"] for p in nobody["providers"]] == ["your organisation's sign-in", "Akaion"]
+    assert [p["signin"] for p in nobody["providers"]] == ["", "akaion"]
+
+    anna = client.get(
+        "/api/kernel/identity",
+        headers={"X-Forwarded-Email": "anna@acme.example", PROXY_SECRET_HEADER: "s3cret"},
+    ).json()["you"]
+    assert (anna["id"], anna["groups"]) == ("anna@acme.example", ["sales"])
+
+    forged = client.get("/api/kernel/identity", headers={"Authorization": "Bearer abc.def.ghi"})
+    assert forged.status_code == 200 and forged.json()["you"] is None
+    assert "no provider accepted" in forged.json()["problem"]

@@ -255,7 +255,9 @@ export default function AskView() {
       if (e instanceof DOMException && e.name === "AbortError") {
         setHistory((h) => h.map((x) => (x.id === id ? { ...x, stopped: true } : x)))
       } else {
-        const detail = e instanceof KernelError ? e.detail : String(e)
+        const detail = e instanceof KernelError && e.status === 401
+          ? `This perimeter needs to know who you are before it runs anything. Sign in from the sidebar. (${e.detail})`
+          : e instanceof KernelError ? e.detail : String(e)
         setHistory((h) => h.map((x) => (x.id === id ? { ...x, error: detail } : x)))
       }
     } finally {

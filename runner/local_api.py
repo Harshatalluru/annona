@@ -29,12 +29,12 @@ import secrets
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
@@ -335,6 +335,21 @@ def create_app(
     return app
 
 
+class _UIFiles(StaticFiles):
+    """The built UI, with ``index.html`` revalidated on every load.
+
+    ``index.html`` names the hashed bundle. Served without a cache header, a
+    browser keeps it by heuristic and the window stays on the previous release
+    after an update. The hashed assets themselves can be cached freely.
+    """
+
+    def file_response(self, full_path: Any, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(full_path, *args, **kwargs)
+        if str(full_path).endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def _mount_ui(app: FastAPI) -> None:
     """Mount the built React UI at `/`. Skip-with-warning if dist isn't built yet."""
     index_html = _UI_DIST / "index.html"
@@ -344,7 +359,7 @@ def _mount_ui(app: FastAPI) -> None:
             f"or use start.sh (auto-builds on first run)."
         )
         return
-    app.mount("/", StaticFiles(directory=str(_UI_DIST), html=True), name="ui")
+    app.mount("/", _UIFiles(directory=str(_UI_DIST), html=True), name="ui")
     logger.info(f"UI mounted at / from {_UI_DIST}")
 
 

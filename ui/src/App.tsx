@@ -13,7 +13,9 @@ import UpdateBanner from "./components/UpdateBanner";
 import { signIn, isSigninHandoff } from "./lib/signin";
 import { auth as authApi, runner as runnerApi, sync as syncApi, AuthStatus, RunnerMode } from "./api/runner";
 import { API_ORIGIN } from "./api/base";
-import { kernel as kernelApi } from "./api/kernel";
+import { kernel as kernelApi, Identity } from "./api/kernel";
+import AccountBlock from "./components/auth/AccountBlock";
+import { fbAuth, signOut } from "./lib/firebase";
 import "./App.css";
 import "./css/auth-animations.css";
 
@@ -47,6 +49,12 @@ export default function App() {
   const [bootChecked, setBootChecked] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [cloudSyncing, setCloudSyncing] = useState(false);
+  // Who the perimeter says this window is — the sidebar shows this, not the
+  // browser's own belief. See AccountBlock.
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const refreshIdentity = async () => {
+    try { setIdentity(await kernelApi.identity()); } catch { /* no policy yet, or offline */ }
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [noteCount, setNoteCount]       = useState<number | null>(null);
   // null until the daemon has been asked. Rendering the app before that is
@@ -107,16 +115,24 @@ export default function App() {
     const check = async () => {
       try {
         const [s, m] = await Promise.all([authApi.status(), runnerApi.mode()]);
+        const who = await kernelApi.identity().catch(() => null);
         if (cancelled) return;
         setAuthStatus(s);
         setMode(m);
+        setIdentity(who);
         // Welcome rule: first launch and not yet authenticated — or this page
         // was opened by the desktop app to sign in, in which case the screen
         // with the button on it is the entire reason the tab exists. Without
         // this the handoff opened straight into Ask and there was nothing to
         // click; the onboarding flag is a fact about a previous visit, not
         // about what this tab was opened for.
-        setShowWelcome(isSigninHandoff() || (!readOnboardingDone() && !s.authenticated));
+        // A perimeter that requires identity keeps the welcome up until the
+        // person is verified: there is nothing to do here anonymously.
+        setShowWelcome(
+          isSigninHandoff()
+          || (!!who?.required && !who.you)
+          || (!readOnboardingDone() && !s.authenticated),
+        );
         setBootChecked(true);
       } catch {
         if (!cancelled) setTimeout(check, 1000);
@@ -130,6 +146,7 @@ export default function App() {
     setAuthStatus(s);
     setShowWelcome(false);
     refreshMode();
+    refreshIdentity();
   };
 
   const handleSkipFromWelcome = () => {
@@ -140,10 +157,15 @@ export default function App() {
     try { setMode(await runnerApi.mode()); } catch { /* offline */ }
   };
 
+  // Both halves of the one sign-in: the browser's session, which signs the
+  // requests, and the daemon's copy, which syncs. Clearing only the second left
+  // every later request still carrying the person's name.
   const handleLogout = async () => {
+    await signOut(fbAuth).catch(() => { /* not signed in in this browser */ });
     await authApi.logout();
     setAuthStatus({ authenticated: false, email: null, runner_id: null });
     refreshMode();
+    refreshIdentity();
   };
 
   const handleSidebarCloudLogin = async () => {
@@ -154,6 +176,7 @@ export default function App() {
       setAuthStatus(s);
       try { localStorage.setItem(ONBOARDING_FLAG, "true"); } catch { /* */ }
       refreshMode();
+      refreshIdentity();
 
       // Auto-push once auth lands: send every pending local note to the cloud.
       // Failure here must never roll back the login.
@@ -205,6 +228,7 @@ export default function App() {
       <>
         <UpdateBanner />
         <WelcomeView
+          identity={identity}
           vaultPath={mode?.vault_path}
           onLogin={handleLoginFromWelcome}
           onSkip={handleSkipFromWelcome}
@@ -260,47 +284,13 @@ export default function App() {
 
           <div style={{ flex: 1 }} />
 
-          {/* Cloud sync badge — visible when in local mode */}
-          {!isAuthed && (
-            <div className="ak-cloud-badge" role="region" aria-label="Local mode">
-              <div className="ak-cloud-badge__row">
-                <span className="ak-cloud-badge__dot" />
-                <span style={{ fontSize: 12, fontWeight: 500 }}>Local</span>
-              </div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4, marginTop: -2 }}>
-                Notes stay on this machine
-              </div>
-              <button
-                className="ak-cloud-badge__cta"
-                onClick={handleSidebarCloudLogin}
-                disabled={cloudSyncing}
-              >
-                {cloudSyncing ? "Connecting…" : "Sync →"}
-              </button>
-            </div>
-          )}
-
-          {/* Account block — authed */}
-          {isAuthed && (
-            <div className="ak-cloud-badge" role="region" aria-label="Cloud mode">
-              <div className="ak-cloud-badge__row">
-                <span className="ak-cloud-badge__dot ak-cloud-badge__dot--online" />
-                <span style={{ fontSize: 12, fontWeight: 500 }}>Cloud sync</span>
-              </div>
-              {authStatus?.email && (
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: -2 }}>
-                  {authStatus.email}
-                </div>
-              )}
-              <button
-                className="ak-cloud-badge__cta"
-                onClick={handleLogout}
-                style={{ borderColor: "rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)" }}
-              >
-                Logout
-              </button>
-            </div>
-          )}
+          <AccountBlock
+            identity={identity}
+            sync={authStatus}
+            busy={cloudSyncing}
+            onSignIn={handleSidebarCloudLogin}
+            onSignOut={handleLogout}
+          />
         </nav>
 
         {/* Settings row (gear popover) */}
