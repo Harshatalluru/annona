@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 
+from runner import __version__
 from runner.audit.metrics import METRICS
 from runner.services.host import sample as sample_host
 
@@ -133,7 +134,7 @@ def create_app(
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "service": "annona"}
+        return {"status": "ok", "service": "annona", "version": __version__}
 
     # ── Metrics ───────────────────────────────────────────────────────────────
 

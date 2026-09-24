@@ -74,6 +74,21 @@ function DecisionRow({ d }: { d: Decision }) {
       <span className="an-decision__where">{d.substrate || "—"}</span>
       <span className="an-decision__why">
         {String(d.detail?.reason ?? d.rule_id ?? "")}
+        {/* The contrast, from the ledger: every substrate the rule allowed and
+            why it was not this one. "Why here" is half an answer. */}
+        {Array.isArray(d.detail?.rejected) && d.detail.rejected.map(([sid, why]: [string, string]) => (
+          <span key={sid} className="an-decision__not">
+            not <b>{sid}</b> — {why}
+          </span>
+        ))}
+        {Array.isArray(d.detail?.candidates) && d.detail.candidates
+          .filter((sid: string) => sid !== d.substrate)
+          .map((sid: string) => (
+            <span key={sid} className="an-decision__not">
+              not <b>{sid}</b> — also allowed, ranked below {d.substrate} by{" "}
+              {String(d.detail?.reason ?? "").match(/prefer=\w+/)?.[0] ?? "the rule's preference"}
+            </span>
+          ))}
       </span>
     </div>
   )

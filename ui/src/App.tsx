@@ -49,6 +49,12 @@ export default function App() {
   const { status, start } = useRunner();
   const [view, setView]               = useState<View>("ask");
   const [monitorOpen, setMonitorOpen] = useState(false);
+  // The daemon's version, to show beside the window's: in the desktop app the
+  // two ship separately and can drift, and a mismatch explains odd behaviour.
+  const [daemonVersion, setDaemonVersion] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(`${API_ORIGIN}/health`).then((r) => r.json()).then((h) => setDaemonVersion(h.version ?? null)).catch(() => {});
+  }, []);
   const [authStatus, setAuthStatus]   = useState<AuthStatus | null>(null);
   const [mode, setMode]               = useState<RunnerMode | null>(null);
   const [bootChecked, setBootChecked] = useState(false);
@@ -309,7 +315,7 @@ export default function App() {
             <SettingsIcon size={14} />
           </button>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            v0.1.0
+            v{__APP_VERSION__}
           </span>
           {settingsOpen && (
             <div className="ak-settings-popover" role="menu">
@@ -405,7 +411,12 @@ export default function App() {
         )}
         <div className="ak-statusbar__sep" />
         <div className="ak-statusbar__item ak-statusbar__item--muted">
-          <span>Annona v0.1.0</span>
+          <span title={`window ${__APP_VERSION__} · daemon ${daemonVersion ?? "?"}`}>
+            Annona v{__APP_VERSION__}
+            {daemonVersion && daemonVersion !== __APP_VERSION__ && (
+              <span style={{ color: "#e0a33a" }}> · daemon v{daemonVersion}</span>
+            )}
+          </span>
         </div>
       </footer>
     </div>

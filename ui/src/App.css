@@ -1276,3 +1276,5 @@ html, body { font-feature-settings: "ss01", "cv11"; }
 .an-drawer .an-mon-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 @keyframes an-fade { from { opacity: 0; } }
 @keyframes an-slide { from { transform: translateX(24px); opacity: 0.6; } }
+.an-decision__not { display: block; color: var(--text-sub); margin-top: 2px; }
+.an-decision__not b { color: var(--text-muted); font-weight: 500; }
