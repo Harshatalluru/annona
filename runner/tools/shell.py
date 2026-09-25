@@ -5,38 +5,42 @@ Runs shell commands.
 """
 
 import subprocess
-from typing import Any, Dict
+from typing import Annotated, Any, Dict, Optional
 
 from loguru import logger
+from pydantic import Field
 
-from .base import Tool
+from .base import FilePath, Tool, ToolArguments, forwarded
 
 
-class ShellTool(Tool):
+class ShellArgs(ToolArguments):
+    command: Annotated[str, Field(description="Shell command to execute")]
+    timeout: Annotated[float | None, Field(description="Timeout in seconds (default: 60)")] = None
+    cwd: Annotated[FilePath | None, Field(description="Working directory")] = None
+
+
+class ShellTool(Tool[ShellArgs]):
     """Run shell commands."""
+
+    arguments = ShellArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
             name="shell",
             description="Execute shell commands",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "Shell command to execute"},
-                    "timeout": {
-                        "type": "number",
-                        "description": "Timeout in seconds (default: 60)",
-                    },
-                    "cwd": {"type": "string", "description": "Working directory"},
-                },
-                "required": ["command"],
-            },
         )
         self.config = config
         self.default_timeout = config.get("tools", {}).get("shell", {}).get("timeout", 60)
 
+    def call(self, args: ShellArgs) -> Dict[str, Any]:
+        return self.execute(**forwarded(args))
+
     def execute(
-        self, command: str, timeout: int = None, cwd: str = None, **kwargs
+        self,
+        command: str,
+        timeout: Optional[float] = None,
+        cwd: Optional[str] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """Run one shell command."""
         logger.info(f"Executing shell command: {command}")

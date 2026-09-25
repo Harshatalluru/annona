@@ -235,7 +235,7 @@ strict_equality = true
 
 # ── Typing debt ledger ────────────────────────────────────────────────────────
 #
-# These modules predate type checking and currently report 19 errors between
+# These modules predate type checking and currently report 4 errors between
 # them. They are listed individually, rather than excluded by a wildcard, so the
 # debt is countable and shrinks by deletion: type a module, remove its line.
 #
@@ -248,7 +248,6 @@ strict_equality = true
 module = [
   "runner.cli",
   "runner.local_api",
-  "runner.tools.*",
   "runner.tui",
 ]
 ignore_errors = true

@@ -19,15 +19,16 @@ would be undone by a tool that inlined base64 into its own result.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from loguru import logger
+from pydantic import Field
 
 from runner.tools.extractors import ReadOptions, capabilities, extract
 from runner.tools.extractors.av import AUDIO_SUFFIXES, VIDEO_SUFFIXES
 from runner.tools.extractors.registry import CODE_SUFFIXES, IMAGE_SUFFIXES, TEXT_SUFFIXES
 
-from .base import Tool
+from .base import FilePath, Tool, ToolArguments, forwarded
 
 # Kept as a module constant with its original key names because `explorer` and
 # the existing tests read it. New families were appended rather than folded into
@@ -56,8 +57,22 @@ SUPPORTED_FORMATS = {
 MAX_FILE_SIZE_MB = 50
 
 
-class DocumentReaderTool(Tool):
+class DocumentReaderArgs(ToolArguments):
+    path: Annotated[FilePath, Field(description="Absolute or ~ path to the file to read")]
+    max_chars: Annotated[
+        int | None,
+        Field(description="Max characters to return (default: 100000). Use 0 for no limit."),
+    ] = None
+    sheet_name: Annotated[
+        str | None,
+        Field(description="For spreadsheets: the sheet to read (default: every sheet)"),
+    ] = None
+
+
+class DocumentReaderTool(Tool[DocumentReaderArgs]):
     """Reads a file of almost any format and returns it as text."""
+
+    arguments = DocumentReaderArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
@@ -74,31 +89,16 @@ class DocumentReaderTool(Tool):
                 "Reading is best-effort and always honest: whatever could not be read comes "
                 "back under 'warnings'."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute or ~ path to the file to read",
-                    },
-                    "max_chars": {
-                        "type": "integer",
-                        "description": "Max characters to return (default: 100000). Use 0 for no limit.",
-                    },
-                    "sheet_name": {
-                        "type": "string",
-                        "description": "For spreadsheets: the sheet to read (default: every sheet)",
-                    },
-                },
-                "required": ["path"],
-            },
         )
         self.config = config
         cfg_perms = config.get("permissions", {}).get("filesystem", {})
         self.max_size_mb = cfg_perms.get("max_file_size_mb", MAX_FILE_SIZE_MB)
 
+    def call(self, args: DocumentReaderArgs) -> Dict[str, Any]:
+        return self.execute(**forwarded(args))
+
     def execute(
-        self, path: str, max_chars: int = 100_000, sheet_name: Optional[str] = None, **kwargs
+        self, path: str, max_chars: int = 100_000, sheet_name: Optional[str] = None, **kwargs: Any
     ) -> Dict[str, Any]:
         target = Path(path).expanduser().resolve()
 

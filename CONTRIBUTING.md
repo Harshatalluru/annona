@@ -75,8 +75,8 @@ Older modules are listed individually in ledgers — the mypy overrides in
 `pyproject.toml` and the ruff per-file ignores. They are listed one by one rather
 than by wildcard so the debt is countable and shrinks by deletion. Touching one of
 those modules? Consider removing its line and paying down the difference. See
-[typing debt](https://github.com/akaion-ai/annona/blob/main/docs/reference/typing-debt.md), which also records the two entries
-that are real defects rather than missing annotations.
+[typing debt](https://github.com/akaion-ai/annona/blob/main/docs/reference/typing-debt.md), which also records the entry
+that is a real defect rather than a missing annotation.
 
 ## Tests
 

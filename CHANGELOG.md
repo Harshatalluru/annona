@@ -6,6 +6,16 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### Tools declare their arguments (#8)
+
+`Tool.execute(**kwargs)` promised a signature no tool honoured. Each tool now
+declares a typed arguments model; the schema offered to the model is derived
+from it (unchanged, byte for byte) and generic callers go through
+`Tool.run(arguments)`, which validates before the tool runs — so a malformed
+call comes back naming the field that was wrong, not as a `TypeError`. Path
+arguments are typed `FilePath` and reported by `Tool.material_fields()`.
+`runner.tools.*` is off the typing-debt ledger.
+
 ### Skills Studio can install, from a list the policy wrote
 
 `skill_catalogs` names a catalog and the skills pre-approved from it (ADR 0008).

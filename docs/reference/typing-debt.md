@@ -1,6 +1,6 @@
 # Typing debt
 
-`mypy` runs over the whole package and passes. It passes because four modules are
+`mypy` runs over the whole package and passes. It passes because three modules are
 listed in a ledger in `pyproject.toml` under `ignore_errors`, not because they are
 clean.
 
@@ -17,7 +17,6 @@ are checked with `disallow_untyped_defs`, `warn_return_any` and
 
 | Module | Errors | Nature |
 |---|---|---|
-| `runner.tools.*` | 6 | One design defect, six manifestations — see below |
 | `runner.cli` | 2 | `str \| None` passed where `str` is required |
 | `runner.local_api` | 2 | **Real defect** — see below |
 | `runner.tui` | — | Untyped module, notes only |
@@ -41,28 +40,24 @@ exist produces a 500.
 The fix is a `None` check and an `HTTPException(404)`, which changes the
 response an existing client sees — hence not here.
 
-### `runner/tools/*` — one defect, six reports
+## Paid
 
-`Tool.execute` is declared as:
+### `runner/tools/*` — one defect, six reports (#8)
 
-```python
-def execute(self, **kwargs: Any) -> Any: ...
-```
+`Tool.execute` was declared as `execute(self, **kwargs) -> Any` while every
+concrete tool required its own arguments: a Liskov violation, reported once per
+tool. It stopped being benign the moment something dispatched over `Tool`
+generically — the agent loop's executor already did, and grammar-constrained
+tool calls (#1) will.
 
-while every concrete tool narrows it:
-
-```python
-def execute(self, operation: str, path: str, ..., **kwargs: Any) -> dict[str, Any]: ...
-```
-
-mypy is right: the base accepts `execute()` with no arguments and the subclasses
-do not, so this is a Liskov violation. It is benign today because every call site
-passes the arguments a tool needs, and it becomes real the moment something
-dispatches generically over `Tool`.
-
-The fix is to give the base class an honest signature — most likely a typed
-per-tool arguments model, which is also what Phase 2's schema-to-grammar
-compilation wants. Doing it now would mean rewriting all five tools mid-refactor.
+The base no longer declares `execute`. Each tool declares a typed arguments
+model (`Tool[Args]`, `arguments = Args`), the schema advertised to the model is
+derived from it (and is byte-identical to the one written out by hand before),
+and generic callers use `Tool.run(arguments)`, which validates against the
+model and then calls the tool's own `execute`. Path arguments are typed
+`FilePath`, so `Tool.material_fields()` can say which arguments name material —
+the hook the classifier needs to stop pattern-matching paths out of tool
+arguments. `runner.tools.*` is off the ledger, extractors included.
 
 ## Fixing one
 
