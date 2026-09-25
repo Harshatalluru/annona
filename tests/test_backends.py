@@ -364,7 +364,7 @@ class TestRegistryToolExecutor:
 
     def test_a_successful_call_returns_the_tool_output_untouched(self):
         registry = MagicMock()
-        registry.get_tool.return_value.execute.return_value = {"rows": [1, 2]}
+        registry.get_tool.return_value.run.return_value = {"rows": [1, 2]}
 
         result = RegistryToolExecutor(registry).invoke(ToolCall(id="1", name="fs"))
 
@@ -374,7 +374,7 @@ class TestRegistryToolExecutor:
     def test_a_raising_tool_becomes_an_error_result(self):
         """Third-party code may raise anything; the run must continue."""
         registry = MagicMock()
-        registry.get_tool.return_value.execute.side_effect = OSError("disk on fire")
+        registry.get_tool.return_value.run.side_effect = OSError("disk on fire")
 
         result = RegistryToolExecutor(registry).invoke(ToolCall(id="1", name="fs"))
 

@@ -5,15 +5,37 @@ Filesystem operations.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from loguru import logger
+from pydantic import Field
 
-from .base import Tool
+from .base import FilePath, Tool, ToolArguments, forwarded
 
 
-class FilesystemTool(Tool):
+class FilesystemArgs(ToolArguments):
+    operation: Annotated[
+        Literal["read", "write", "list", "exists", "delete", "search"],
+        Field(description="Operation to perform"),
+    ]
+    path: Annotated[FilePath, Field(description="File or directory path")]
+    content: Annotated[str | None, Field(description="Content to write (for write operation)")] = (
+        None
+    )
+    pattern: Annotated[
+        str | None,
+        Field(description="Glob pattern for search, e.g. '*.pdf' or '*report*'"),
+    ] = None
+    recursive: Annotated[
+        bool | None,
+        Field(description="For search: recurse into subdirectories (default: true)"),
+    ] = None
+
+
+class FilesystemTool(Tool[FilesystemArgs]):
     """Tool per operazioni filesystem"""
+
+    arguments = FilesystemArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
@@ -22,41 +44,20 @@ class FilesystemTool(Tool):
                 "Perform filesystem operations: read, write, list, exists, delete, search. "
                 "'search' finds files by name glob pattern under a directory."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["read", "write", "list", "exists", "delete", "search"],
-                        "description": "Operation to perform",
-                    },
-                    "path": {"type": "string", "description": "File or directory path"},
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write (for write operation)",
-                    },
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern for search, e.g. '*.pdf' or '*report*'",
-                    },
-                    "recursive": {
-                        "type": "boolean",
-                        "description": "For search: recurse into subdirectories (default: true)",
-                    },
-                },
-                "required": ["operation", "path"],
-            },
         )
         self.config = config
+
+    def call(self, args: FilesystemArgs) -> Any:
+        return self.execute(**forwarded(args))
 
     def execute(
         self,
         operation: str,
         path: str,
-        content: str = None,
+        content: Optional[str] = None,
         pattern: str = "*",
         recursive: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ) -> Any:
         """Perform a filesystem operation."""
         target_path = Path(path).expanduser().resolve()

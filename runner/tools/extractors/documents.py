@@ -78,8 +78,8 @@ def read_pdf(path: Path, opts: ReadOptions) -> Extraction:
 
         reader = PdfReader(str(path))
         metadata["pages"] = len(reader.pages)
-        for number, page in enumerate(reader.pages, 1):
-            text = page.extract_text() or ""
+        for number, pdf_page in enumerate(reader.pages, 1):
+            text = pdf_page.extract_text() or ""
             if text.strip():
                 pages.append(f"--- Page {number} ---\n{text}")
 

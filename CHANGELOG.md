@@ -6,6 +6,26 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### A follow-up can reach a file attached earlier (#16)
+
+Every `/ask` is a fresh run, and the window only sent the files attached to the
+current message — so a follow-up about an invoice attached one message earlier
+reached the model with no path to it, and the only remedy was to upload it
+again. The window now sends the conversation's earlier files as
+`earlier_attachments`; the kernel names their paths in the prompt (where they
+are classified, so a restricted file keeps the follow-up local) without reading
+them again, and the model opens one with `document_reader` when it needs to.
+
+### Tools declare their arguments (#8)
+
+`Tool.execute(**kwargs)` promised a signature no tool honoured. Each tool now
+declares a typed arguments model; the schema offered to the model is derived
+from it (unchanged, byte for byte) and generic callers go through
+`Tool.run(arguments)`, which validates before the tool runs — so a malformed
+call comes back naming the field that was wrong, not as a `TypeError`. Path
+arguments are typed `FilePath` and reported by `Tool.material_fields()`.
+`runner.tools.*` is off the typing-debt ledger.
+
 ### A fresh install is fail-closed (#2)
 
 The first `annona run` on a machine with no configuration used to write the
