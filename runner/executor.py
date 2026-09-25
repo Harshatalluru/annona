@@ -108,7 +108,7 @@ class TaskExecutor:
 
         # Esegui il tool
         tool = self.tools.get_tool(tool_name)
-        result = tool.execute(**tool_args)
+        result = tool.run(tool_args)
 
         return {"type": "tool_result", "tool": tool_name, "result": result}
 

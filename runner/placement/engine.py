@@ -231,7 +231,13 @@ class PlacementDecisionEngine:
                 outcome="queued",
                 klass=klass,
                 rule_id=rule.id,
-                reason="no permitted substrate is available; queued until one returns",
+                # Said plainly because nothing resumes it yet (#3): "queued until
+                # one returns" read as deferred execution, and an operator who
+                # believed it would wait for an answer that never came.
+                reason=(
+                    "no permitted substrate is available; recorded as queued — nothing "
+                    "resumes it automatically yet, so run it again once one is back"
+                ),
                 rejected=rejected,
             )
 

@@ -22,6 +22,14 @@ kernel reads it the same way, and the read is a decision like any other.
    they are read as text (OCR and metadata) and the answer says so: the chip
    reads `3 read · 0 shown`.
 
+5. **It stays addressable for the rest of the conversation.** Each message is
+   a fresh run, so the window sends the paths of files attached in earlier
+   messages along with the next one (`earlier_attachments`). They are named in
+   the prompt, not read again: the model calls `document_reader` on one when a
+   follow-up needs it, and because the path is in the prompt it is classified,
+   so a follow-up about a restricted file is placed as one. Nothing has to be
+   uploaded twice.
+
 If the inbox is outside what `document_reader` may touch, the upload still
 succeeds and the window tells you at once, with the lines to add:
 
@@ -108,8 +116,13 @@ GET    /api/kernel/formats             what this installation can read
 POST   /api/kernel/attachments         multipart upload → stored file + class
 GET    /api/kernel/attachments         what is in the inbox
 DELETE /api/kernel/attachments/{id}    remove one
-POST   /api/kernel/ask                 {"prompt": "...", "attachments": ["/abs/path", ...]}
+POST   /api/kernel/ask                 {"prompt": "...", "attachments": ["/abs/path", ...],
+                                        "earlier_attachments": ["/abs/path", ...]}
 ```
+
+`attachments` are read before the first turn; `earlier_attachments` — files
+attached earlier in the same conversation — are only named, so the model can
+reopen them without the operator uploading them again.
 
 `ask` takes **paths, not contents**. That is the whole design: an attachment is
 a file the perimeter can reason about, not a payload that arrived beside it.

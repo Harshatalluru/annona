@@ -356,7 +356,7 @@ rules:
     on_unavailable: hold           # the whole point. No silent downgrade.
   - match: { class: internal }
     allow: [local-gpu, eu-cluster]
-    on_unavailable: queue
+    on_unavailable: queue          # today: recorded as queued, not resumed (#3)
   - match: { class: public }
     allow: [local-gpu, eu-cluster, frontier]
     prefer: cost

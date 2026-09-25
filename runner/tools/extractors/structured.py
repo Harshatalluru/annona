@@ -199,8 +199,8 @@ def render_fattura(root: ET.Element) -> Extraction:
         )
 
         for cause in _all(general, "Causale"):
-            if (cause.text or "").strip():
-                lines.append(f"Causale: {cause.text.strip()}")
+            if cause_text := (cause.text or "").strip():
+                lines.append(f"Causale: {cause_text}")
 
         details = _all(body, "DettaglioLinee")
         if details:

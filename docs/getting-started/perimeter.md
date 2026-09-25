@@ -18,10 +18,16 @@ Or `annona policy init --model qwen2.5:14b` if you only want the policy and
 already have a configuration.
 
 That writes `~/.annona/policy.yaml` and changes the daemon's behaviour in one
-way that matters: **from this point tools are default-deny**. An installation
-without a policy keeps the legacy allow-by-default permission manager, so
-upgrading does not silently break a working machine; writing a policy is the act
-that switches enforcement on.
+way that matters: **from this point tools are default-deny**.
+
+A fresh install gets this without asking: the first `annona run` (or `annona
+cloud enable|disable`) on a machine with no configuration writes the local-only
+policy alongside the config. An installation that already had a configuration
+and no policy keeps the legacy allow-by-default permission manager, so upgrading
+does not silently break a working machine — but it is not silent either: every
+`annona run` prints that it is unenforced, and `annona status` shows which of the
+two wirings the machine is on. Writing a policy is the act that switches
+enforcement on.
 
 The shipped policy registers **only your local runtime**. Nothing can leave the
 machine because nothing outside it is declared.
@@ -89,6 +95,17 @@ rules:
     allow: [frontier, local-gpu]
     prefer: quality
 ```
+
+`on_unavailable` says what happens when every substrate a rule allows is down:
+
+| Value | What happens today |
+|---|---|
+| `hold` | The step does not run. Nothing leaves; the refusal is in the ledger. |
+| `brief` | A local model writes a brief that may cross instead of the material, if `egress.brief` permits it for the class. |
+| `redact` | A local redactor replaces identifiers and the result is reclassified before it may cross, if redaction is configured and permitted for the class. |
+| `queue` | **Behaves like `hold`.** The ledger records `queued`, but nothing resumes the step when a substrate returns — run it again yourself. Automatic resumption is [not built yet](https://github.com/akaion-ai/annona/issues/3). |
+
+Sealed material is never briefed or redacted: it is held whatever the rule says.
 
 `max_class` is the field everything turns on. It is declared per substrate rather
 than derived from `jurisdiction`, so you can be stricter than geography — an EU

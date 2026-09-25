@@ -11,16 +11,34 @@ path in an outbound payload, so a passage from a sealed folder seals the run —
 the provenance of a retrieved passage is enforced by the same code as a file read.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
+
+from pydantic import Field
 
 from runner.memory import MemoryIndex, default_index_path
 from runner.memory.index import ollama_embedder
 
-from .base import Tool
+from .base import Tool, ToolArguments, forwarded
 
 
-class MemorySearchTool(Tool):
+class MemorySearchArgs(ToolArguments):
+    # `within` is deliberately not a field: it is not advertised to the model,
+    # and the perimeter overwrites whatever arrives (see `execute`).
+    query: Annotated[
+        str,
+        Field(description="What to look for: names of companies or people, topics, codes"),
+    ]
+    top_k: Annotated[int | None, Field(description="Passages to return (default 6, max 20)")] = None
+    strict: Annotated[
+        bool | None,
+        Field(description="Match words only as names and codes (used by the automatic lookup)"),
+    ] = None
+
+
+class MemorySearchTool(Tool[MemorySearchArgs]):
     """Hybrid search over the company's memory, on this machine."""
+
+    arguments = MemorySearchArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
@@ -31,25 +49,10 @@ class MemorySearchTool(Tool):
                 "Use it before drafting a contract or an offer, or whenever the answer depends "
                 "on who the company already works with. Returns passages with their source file."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "What to look for: names of companies or people, topics, codes",
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Passages to return (default 6, max 20)",
-                    },
-                    "strict": {
-                        "type": "boolean",
-                        "description": "Match words only as names and codes (used by the automatic lookup)",
-                    },
-                },
-                "required": ["query"],
-            },
         )
+
+    def call(self, args: MemorySearchArgs) -> Dict[str, Any]:
+        return self.execute(**forwarded(args))
 
     def execute(
         self,
@@ -57,7 +60,7 @@ class MemorySearchTool(Tool):
         top_k: int = 6,
         strict: bool = False,
         within: Optional[List[str]] = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         """``within`` is not advertised to the model: the perimeter sets it to the
         folders this run's subject may retrieve from, overwriting anything else."""

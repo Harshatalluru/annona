@@ -340,3 +340,94 @@ def test_the_closing_line_does_not_claim_isolation_a_policy_does_not_give(
 
     assert "Nothing leaves this machine" not in result.output
     assert "frontier" in result.output
+
+
+# ── a first install is fail-closed (#2) ───────────────────────────────────────
+
+
+class _FakeDaemon:
+    """Stands in for the daemon so `annona run --once` can be driven offline."""
+
+    def __init__(self, config, **_kwargs):
+        self.config = config
+
+    def execute_once(self, task: str) -> str:
+        return "done"
+
+
+def test_a_first_run_on_an_empty_home_writes_a_policy_as_well(runner, fresh_home, monkeypatch):
+    """`annona run` used to write the config alone, which left the default install
+    on the allow-by-default legacy path until somebody knew to run `policy init`."""
+    from runner import cli as cli_module
+    from runner.ai_client import perimeter_mode
+
+    monkeypatch.setattr(cli_setup, "probe_runtime", _probe("qwen2.5:14b"))
+    monkeypatch.setattr(cli_module, "RunnerDaemon", _FakeDaemon)
+
+    result = runner.invoke(app, ["run", "--once", "--task", "hello"])
+
+    assert result.exit_code == 0, result.output
+    assert (fresh_home / ".akaion" / "config.yaml").exists()
+    assert (fresh_home / ".annona" / "policy.yaml").exists()
+    assert perimeter_mode({})[0] is True
+    assert "unenforced" not in result.output
+
+
+def test_cloud_disable_on_an_empty_home_is_fail_closed_too(runner, fresh_home, monkeypatch):
+    """Every command that creates a home unattended goes through the same door."""
+    monkeypatch.setattr(cli_setup, "probe_runtime", _probe("qwen2.5:14b"))
+
+    result = runner.invoke(app, ["cloud", "disable"])
+
+    assert result.exit_code == 0, result.output
+    assert (fresh_home / ".annona" / "policy.yaml").exists()
+
+
+def test_an_existing_install_without_a_policy_is_not_tightened_but_is_told(
+    runner, fresh_home, monkeypatch
+):
+    """Silently moving a working install to default-deny would be a hostile upgrade;
+    silently leaving it unenforced is the other half of the defect. It is neither."""
+    from runner import cli as cli_module
+    from runner.config import ConfigManager
+
+    monkeypatch.setattr(cli_setup, "probe_runtime", _probe("qwen2.5:14b"))
+    monkeypatch.setattr(cli_module, "RunnerDaemon", _FakeDaemon)
+    ConfigManager().create_default_config()  # an install that predates the policy engine
+
+    result = runner.invoke(app, ["run", "--once", "--task", "hello"])
+
+    assert result.exit_code == 0, result.output
+    assert not (fresh_home / ".annona" / "policy.yaml").exists()
+    assert "unenforced" in result.output
+    assert "annona policy init" in result.output
+
+
+def test_an_install_that_turned_the_perimeter_off_is_not_nagged(runner, fresh_home, monkeypatch):
+    """`perimeter.enabled: false` is somebody who already knows; the warning is for
+    the installation nobody has looked at."""
+    from runner import cli as cli_module
+    from runner.config import ConfigManager
+
+    monkeypatch.setattr(cli_module, "RunnerDaemon", _FakeDaemon)
+    ConfigManager().create_config({"perimeter": {"enabled": False}})
+
+    result = runner.invoke(app, ["run", "--once", "--task", "hello"])
+
+    assert result.exit_code == 0, result.output
+    assert "unenforced" not in result.output
+
+
+def test_status_says_which_wiring_the_installation_is_on(runner, fresh_home, monkeypatch):
+    """Before, telling enforced from legacy meant reading `_build_enforcement`."""
+    from runner.config import ConfigManager
+
+    monkeypatch.setattr(cli_setup, "probe_runtime", _probe("qwen2.5:14b"))
+    ConfigManager().create_default_config()
+
+    assert "Unenforced" in runner.invoke(app, ["status"]).output
+
+    runner.invoke(app, ["policy", "init"])
+    after = runner.invoke(app, ["status"]).output
+    assert "Unenforced" not in after
+    assert "Enforced" in after

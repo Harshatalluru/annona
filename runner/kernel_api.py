@@ -163,6 +163,16 @@ class AskRequest(BaseModel):
     what keeps an attachment from being a second, unpoliced way into the model.
     """
 
+    earlier_attachments: list[str] = Field(default_factory=list)
+    """Absolute paths of files attached in earlier turns of the same conversation.
+
+    Each ``/ask`` is a fresh run, so without these a follow-up had no path to the
+    file it was about and the only remedy was to upload it again (#16). They are
+    *named*, not read: the path goes into the prompt — where it is classified,
+    so a follow-up about a restricted file is still placed as one — and the
+    model calls ``document_reader`` on it if the question needs the content.
+    """
+
     run_id: str = Field(default="", max_length=64)
     """Client-chosen id for this run, so it can be stopped while it is running.
 
@@ -289,8 +299,18 @@ def _with_attachments(req: AskRequest, policy: Any) -> tuple[str, list[Any], lis
     on the overwhelmingly common policy that registers one local text model. The
     file is still read; it is read as text.
     """
+    # Files attached earlier are named so they stay addressable; a file that is
+    # also attached now is read now, and naming it twice would only confuse.
+    current = {str(Path(p).expanduser()) for p in req.attachments}
+    earlier = inbox.earlier(
+        p
+        for p in dict.fromkeys(req.earlier_attachments)
+        if str(Path(p).expanduser()) not in current
+    )
+    earlier_lines = inbox.earlier_preamble(earlier)
+
     if not req.attachments:
-        return req.prompt, [], []
+        return "\n\n".join(filter(None, [earlier_lines, req.prompt])), [], []
 
     described = []
     for path in req.attachments:
@@ -312,7 +332,7 @@ def _with_attachments(req: AskRequest, policy: Any) -> tuple[str, list[Any], lis
             continue
         described.append(inbox.describe(target, policy=policy))
 
-    prompt = f"{inbox.preamble(described)}\n\n{req.prompt}"
+    prompt = "\n\n".join(filter(None, [inbox.preamble(described), earlier_lines, req.prompt]))
     media = inbox.attachments_for(described) if inbox.vision_families(policy) else []
     reads = [
         ToolCall(

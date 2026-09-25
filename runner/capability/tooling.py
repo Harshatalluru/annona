@@ -58,7 +58,7 @@ class RegistryToolExecutor:
 
         try:
             tool = self._registry.get_tool(call.name)
-            content = tool.execute(**dict(call.arguments))
+            content = tool.run(call.arguments)
         except Exception as exc:  # noqa: BLE001 - tools are arbitrary code
             # Deliberately broad: a tool is third-party code and may raise
             # anything. Turning that into a result the model can read is the

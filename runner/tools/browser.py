@@ -4,40 +4,39 @@ Browser Tool
 Tool per operazioni web/browser (semplificato).
 """
 
-from typing import Any, Dict
+from typing import Annotated, Any, Dict, Literal, Optional
 
 import httpx
 from loguru import logger
+from pydantic import Field
 
-from .base import Tool
+from .base import Tool, ToolArguments, forwarded
 
 
-class BrowserTool(Tool):
+class BrowserArgs(ToolArguments):
+    url: Annotated[str, Field(description="URL to fetch")]
+    method: Annotated[Literal["GET", "POST"] | None, Field(description="HTTP method")] = None
+    data: Annotated[Dict[str, Any] | None, Field(description="Data for POST requests")] = None
+
+
+class BrowserTool(Tool[BrowserArgs]):
     """Tool per operazioni browser/web"""
+
+    arguments = BrowserArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
             name="browser",
             description="Fetch web pages and perform HTTP requests",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "URL to fetch"},
-                    "method": {
-                        "type": "string",
-                        "enum": ["GET", "POST"],
-                        "description": "HTTP method",
-                    },
-                    "data": {"type": "object", "description": "Data for POST requests"},
-                },
-                "required": ["url"],
-            },
         )
         self.config = config
         self.timeout = config.get("tools", {}).get("browser", {}).get("timeout", 30)
 
+    def call(self, args: BrowserArgs) -> Dict[str, Any]:
+        return self.execute(**forwarded(args))
+
     def execute(
-        self, url: str, method: str = "GET", data: Dict[str, Any] = None, **kwargs
+        self, url: str, method: str = "GET", data: Optional[Dict[str, Any]] = None, **kwargs: Any
     ) -> Dict[str, Any]:
         """Perform an HTTP request."""
         logger.info(f"HTTP {method} request to {url}")

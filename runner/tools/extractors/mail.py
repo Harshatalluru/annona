@@ -14,9 +14,10 @@ usually a message they saved deliberately.
 from __future__ import annotations
 
 from email import policy as email_policy
+from email.message import EmailMessage
 from email.parser import BytesParser
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 
@@ -37,7 +38,11 @@ _HEADERS = (
 
 def read_eml(path: Path, opts: ReadOptions) -> Extraction:
     """An RFC 822 message: headers, best text body, and every attachment."""
-    message = BytesParser(policy=email_policy.default).parsebytes(path.read_bytes())
+    # `policy.default` makes the parser return an EmailMessage (with get_body and
+    # iter_attachments); the stubs type every parser result as the older Message.
+    message = cast(
+        EmailMessage, BytesParser(policy=email_policy.default).parsebytes(path.read_bytes())
+    )
 
     lines = [f"=== Email: {path.name} ==="]
     metadata: dict[str, Any] = {"format": "eml", "attachments": []}
@@ -61,7 +66,7 @@ def read_eml(path: Path, opts: ReadOptions) -> Extraction:
     for part in message.iter_attachments():
         name = part.get_filename() or "allegato.bin"
         payload = part.get_payload(decode=True)
-        if payload is None:
+        if not isinstance(payload, bytes):
             continue
 
         target = opts.derived_dir(path) / f"{path.stem}-{Path(name).name}"
@@ -110,7 +115,7 @@ def read_msg(path: Path, opts: ReadOptions) -> Extraction:
     media: list[MediaRef] = []
 
     for attachment in message.attachments:
-        name = attachment.longFilename or attachment.shortFilename or "allegato.bin"
+        name = str(attachment.longFilename or attachment.shortFilename or "allegato.bin")
         payload = attachment.data
         if not isinstance(payload, bytes):
             continue
