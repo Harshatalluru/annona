@@ -245,6 +245,11 @@ export default function AskView() {
     if ((!text && !attached.length) || busy) return
     const id = Date.now()
     const files = attached
+    // Every /ask is a fresh run, so a follow-up about a file attached three
+    // messages ago used to arrive with no path to it — the only way to ask
+    // again was to upload it again (#16). The kernel names these in the prompt
+    // without re-reading them; the model opens one if the question needs it.
+    const earlier = [...new Set(history.flatMap((x) => x.attachments.map((a) => a.path)))]
     setHistory((h) => [...h, { id, prompt: text, attachments: files }])
     setPrompt("")
     setAttached([])
@@ -260,7 +265,7 @@ export default function AskView() {
       const result = await kernel.ask(
         text || "Read the attached files and tell me what they are.",
         files.map((a) => a.path),
-        { escalate, runId, signal: controller.signal },
+        { escalate, runId, signal: controller.signal, earlier },
       )
       const ms = performance.now() - started
       setHistory((h) => h.map((x) => (x.id === id ? { ...x, result, ms } : x)))
