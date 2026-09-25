@@ -734,3 +734,72 @@ class TestCache:
         extract(target)
 
         assert not list(tmp_path.rglob("*.annona-cache*"))
+
+
+# ── A follow-up turn about a file attached earlier (#16) ──────────────────────
+
+
+class TestEarlierInTheConversation:
+    """Each `/ask` is a fresh run; the window names the conversation's earlier files."""
+
+    def test_a_follow_up_names_the_file_it_is_about(self, tmp_path):
+        """Before, the second turn had no path, so the only remedy was a re-upload."""
+        from runner.kernel_api import AskRequest, _with_attachments
+
+        invoice = tmp_path / "0123456789abcdef-fattura.pdf"
+        invoice.write_bytes(b"%PDF-1.4")
+
+        prompt, media, reads = _with_attachments(
+            AskRequest(prompt="qual è il totale?", earlier_attachments=[str(invoice)]), None
+        )
+
+        assert str(invoice) in prompt
+        assert "fattura.pdf" in prompt
+        assert "document_reader" in prompt
+        assert prompt.endswith("qual è il totale?")
+        # Named, not read again: a long conversation about one contract must not
+        # cost a full extraction per message.
+        assert reads == []
+        assert media == []
+
+    def test_a_file_attached_now_is_read_and_not_also_listed_as_earlier(self, tmp_path):
+        from runner.kernel_api import AskRequest, _with_attachments
+
+        note = tmp_path / "note.txt"
+        note.write_text("ciao", encoding="utf-8")
+
+        prompt, _, reads = _with_attachments(
+            AskRequest(
+                prompt="e questo?", attachments=[str(note)], earlier_attachments=[str(note)]
+            ),
+            None,
+        )
+
+        assert [r.arguments["path"] for r in reads] == [str(note)]
+        assert "Attached earlier" not in prompt
+
+    def test_an_earlier_file_that_was_deleted_is_said_to_be_gone(self, tmp_path):
+        from runner.kernel_api import AskRequest, _with_attachments
+
+        prompt, _, reads = _with_attachments(
+            AskRequest(prompt="e adesso?", earlier_attachments=[str(tmp_path / "gone.pdf")]), None
+        )
+
+        assert "no longer exists" in prompt
+        assert reads == []
+
+    def test_a_follow_up_about_a_restricted_file_is_classified_restricted(self, tmp_path, policy):
+        """Naming the path is what keeps the perimeter's view of the turn honest."""
+        from runner.kernel.types import SensitivityClass
+        from runner.kernel_api import AskRequest, _with_attachments
+        from runner.policy.classifier import PolicyClassifier
+
+        scan = tmp_path / "studio" / "scan.dcm"
+        scan.parent.mkdir()
+        scan.write_bytes(b"DICM")
+
+        prompt, _, _ = _with_attachments(
+            AskRequest(prompt="cosa mostra?", earlier_attachments=[str(scan)]), policy
+        )
+
+        assert PolicyClassifier(policy).classify_text(prompt) == SensitivityClass.RESTRICTED
