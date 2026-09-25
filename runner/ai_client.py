@@ -53,6 +53,34 @@ from runner.kernel.types import Attachment, Subject, ToolCall
 
 from .cloud_client import AIBackendClient
 
+#: What an operator is told when a run is about to go down the legacy path. One
+#: string, so the daemon's banner and the per-process log line cannot drift.
+LEGACY_PERIMETER_WARNING = (
+    "This installation is unenforced: there is no policy, so tools are gated by the "
+    "allow-by-default permission manager and the configured provider serves every "
+    "turn. Run `annona policy init` to put it behind the perimeter."
+)
+
+_legacy_warned = False
+
+
+def perimeter_mode(config: Any) -> tuple[bool, Path]:
+    """Whether runs under ``config`` are enforced, and the policy file they read.
+
+    The single answer to "which of the two wirings is this installation on",
+    shared by :meth:`AIClient._build_enforcement` and anything that has to tell
+    an operator — so the answer a person reads is the one a run acts on.
+    """
+    from runner.services.enforcement import policy_path
+
+    perimeter = (config.get("perimeter") or {}) if isinstance(config, dict) else {}
+    configured = perimeter.get("enabled")
+    path = Path(perimeter.get("policy") or policy_path())
+
+    if configured is False:
+        return False, path
+    return bool(configured) or path.exists(), path
+
 
 class AIClient:
     """Client AI che supporta multiple providers"""
@@ -532,16 +560,25 @@ Return the result in a structured format.""".format(
         turning a working installation into a default-deny one because a file
         appeared elsewhere would be a hostile upgrade. It is turned on by
         writing a policy (``annona init``) or by asking for it in the config.
+
+        That argument holds for an installation that already runs, not for one
+        that never has: a fresh home is written with a policy alongside its
+        config (``cli_setup.ensure_fresh_home``), so the legacy path is only
+        reached by installations that predate the policy engine — and each
+        process that takes it says so once, rather than silently.
         """
-        from runner.services.enforcement import Enforcement, policy_path
+        from runner.services.enforcement import Enforcement
 
-        perimeter = self.config.get("perimeter", {}) if isinstance(self.config, dict) else {}
-        configured = perimeter.get("enabled")
-        path = Path(perimeter.get("policy") or policy_path())
-
-        if configured is False:
-            return None
-        if not configured and not path.exists():
+        enforced, path = perimeter_mode(self.config)
+        if not enforced:
+            global _legacy_warned
+            configured_off = (
+                isinstance(self.config, dict)
+                and (self.config.get("perimeter") or {}).get("enabled") is False
+            )
+            if not _legacy_warned and not configured_off:
+                logger.warning(LEGACY_PERIMETER_WARNING)
+                _legacy_warned = True
             return None
 
         try:

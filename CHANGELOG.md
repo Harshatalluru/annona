@@ -6,6 +6,21 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### A fresh install is fail-closed (#2)
+
+The first `annona run` on a machine with no configuration used to write the
+config and stop, which left the default install on the allow-by-default legacy
+path until somebody knew `annona policy init` existed. It now writes the
+local-only policy alongside the config, as `annona init` and `annona setup`
+already did; `annona cloud enable|disable` on an empty home do the same.
+
+Installations that already have a configuration and no policy are **not**
+tightened — that would break a working machine on upgrade. They are told
+instead: every `annona run` prints that the installation is unenforced and the
+one command that changes it, the process logs it once, and `annona status` has a
+**Perimeter** row. `perimeter.enabled: false` is taken as a decision and is not
+nagged about.
+
 ### Skills Studio can install, from a list the policy wrote
 
 `skill_catalogs` names a catalog and the skills pre-approved from it (ADR 0008).
