@@ -53,6 +53,9 @@ dependencies = [
   # System
   "watchdog>=4.0.0",
   "psutil>=5.9.8",
+  # Memory index vectors (`runner.memory.index`, imported by the tool registry,
+  # so by every run). Was only ever arriving transitively.
+  "numpy>=1.26",
   # Auth
   "PyJWT>=2.8.0",
   "cryptography>=42.0.7",
