@@ -63,6 +63,11 @@ logging:
     explicitly**. An empty `allowed_paths` does not mean "no filesystem access";
     it means "all of it".
 
+    This only applies to an installation with no policy. A fresh install writes
+    one alongside its config and is default-deny; an older installation without
+    one says it is unenforced on every `annona run` and in `annona status`. See
+    [The perimeter](perimeter.md).
+
 `denied_paths` is checked first and always wins, so it is the reliable half of the
 model today.
 

@@ -238,16 +238,23 @@ def run(
         # started. The defaults are the same ones `init` would write without
         # being asked anything, and they are safe: local-only, cloud off, three
         # read-only tools. Saying so on stdout keeps it from being a surprise.
-        config_manager = ConfigManager()
-        if not config_manager.config_exists():
-            config_manager.create_default_config()
-            console.print(
-                f"⚙️  [dim]No configuration at {config_manager.config_path}; "
-                "wrote the defaults (local-only, cloud off). "
-                "Run [cyan]annona init[/cyan] to change them.[/dim]"
-            )
+        #
+        # They include the policy. Writing the config alone left every first
+        # start on the allow-by-default legacy path, which only `annona policy
+        # init` switched off — so the default install was the one configuration
+        # without the perimeter the product is about (#2).
+        from runner.ai_client import LEGACY_PERIMETER_WARNING, perimeter_mode
+        from runner.cli_setup import ensure_fresh_home
 
-        config = config_manager.load_config()
+        ensure_fresh_home()
+        config = ConfigManager().load_config()
+
+        # An installation that predates the policy engine keeps working, but it
+        # is not allowed to do so silently: an operator cannot otherwise tell
+        # which of the two wirings they are on without reading the source.
+        enforced, _ = perimeter_mode(config)
+        if not enforced and (config.get("perimeter") or {}).get("enabled") is not False:
+            console.print(f"⚠️  [yellow]{LEGACY_PERIMETER_WARNING}[/yellow]")
 
         # --no-cloud override, not persisted
         if no_cloud:
@@ -306,6 +313,19 @@ def status(
         config_status = "✅ Configured" if config_manager.config_exists() else "❌ Not configured"
         config_path = str(config_manager.config_path) if config_manager.config_exists() else "N/A"
         table.add_row("Configuration", config_status, config_path)
+
+        # Which of the two wirings a run would take — the thing an operator
+        # otherwise has to read the source to find out.
+        from runner.ai_client import perimeter_mode
+
+        if config_manager.config_exists():
+            enforced, policy_file = perimeter_mode(config_manager.load_config())
+            if enforced:
+                table.add_row("Perimeter", "✅ Enforced", str(policy_file))
+            else:
+                table.add_row(
+                    "Perimeter", "⚠️  Unenforced (legacy)", "run `annona policy init` to enforce"
+                )
 
         # Cloud connection
         if auth_manager.is_authenticated():
@@ -980,9 +1000,10 @@ cloud_app = typer.Typer(
 def cloud_enable():
     """Enable cloud sync (sets cloud.enabled=true in the config)."""
     try:
+        from runner.cli_setup import ensure_fresh_home
+
+        ensure_fresh_home()
         cm = ConfigManager()
-        if not cm.config_exists():
-            cm.create_default_config()
         cm.set("cloud.enabled", True)
         console.print("✅ [green]Cloud sync enabled.[/green]")
         auth = AuthManager()
@@ -1000,9 +1021,10 @@ def cloud_enable():
 def cloud_disable():
     """Disable cloud sync — pure local mode."""
     try:
+        from runner.cli_setup import ensure_fresh_home
+
+        ensure_fresh_home()
         cm = ConfigManager()
-        if not cm.config_exists():
-            cm.create_default_config()
         cm.set("cloud.enabled", False)
         console.print("✅ [green]Cloud sync disabled — pure local mode.[/green]")
     except Exception as e:

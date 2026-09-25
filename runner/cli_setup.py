@@ -217,6 +217,45 @@ def ensure_config() -> None:
         console.print(f"  config    [green]written[/green] [dim]{config_manager.config_path}[/dim]")
 
 
+def ensure_fresh_home(endpoint: str = DEFAULT_ENDPOINT) -> bool:
+    """Write the defaults for a home that has never run: the config *and* a policy.
+
+    Returns whether anything was written. A home with a config is left alone,
+    policy or not — that is an installation that already works, and moving it
+    onto default-deny because it was started again would be a hostile upgrade
+    (see ``AIClient._build_enforcement``). A home with no config has no working
+    behaviour to break, so it starts fail-closed: the ``local-only`` profile,
+    naming whichever model is actually installed.
+
+    Every path that creates a configuration unattended goes through here —
+    ``annona run`` on an empty home, ``annona cloud enable|disable`` — so none of
+    them can leave a first install on the allow-by-default path again.
+    """
+    config_manager = ConfigManager()
+    if config_manager.config_exists():
+        return False
+
+    config_manager.create_default_config()
+    console.print(
+        f"⚙️  [dim]No configuration at {config_manager.config_path}; "
+        "wrote the defaults (local-only, cloud off). "
+        "Run [cyan]annona init[/cyan] to change them.[/dim]"
+    )
+
+    target = policy_path()
+    if target.exists():
+        return True
+
+    chosen, _ = choose_model(probe_runtime(endpoint).models)
+    written = write_policy(target, local_endpoint=endpoint, local_model=chosen)
+    console.print(
+        f"🛡️  [dim]No policy either; wrote the local-only one at {written} — "
+        "nothing leaves this machine, and a tool the policy does not name is denied. "
+        "Run [cyan]annona setup --force[/cyan] to choose another profile.[/dim]"
+    )
+    return True
+
+
 def setup(
     model: str = typer.Option(None, "--model", "-m", help="Local model to register in the policy"),
     endpoint: str = typer.Option(
