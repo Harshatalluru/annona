@@ -12,16 +12,47 @@ Segue lo stesso approccio a 5 step di Claude Code:
 
 import fnmatch
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from loguru import logger
+from pydantic import Field
 
-from .base import Tool
+from .base import FilePath, Tool, ToolArguments, forwarded
 from .document_reader import SUPPORTED_FORMATS, get_file_format
 
 
-class ExplorerTool(Tool):
+class ExplorerArgs(ToolArguments):
+    operation: Annotated[
+        Literal["map", "find", "search", "analyze"],
+        Field(
+            description=(
+                "map: directory tree; "
+                "find: locate files by name/type; "
+                "search: grep content across files; "
+                "analyze: full exploration report"
+            )
+        ),
+    ]
+    path: Annotated[FilePath, Field(description="Directory or file path to explore")]
+    pattern: Annotated[
+        str | None, Field(description="Glob pattern (find) or regex/substring (search)")
+    ] = None
+    file_types: Annotated[
+        List[str] | None, Field(description='Filter by extensions, e.g. [".pdf", ".docx"]')
+    ] = None
+    depth: Annotated[int | None, Field(description="Max recursion depth (default: 5)")] = None
+    include_hidden: Annotated[
+        bool | None, Field(description="Include hidden files/dirs (default: false)")
+    ] = None
+    max_results: Annotated[int | None, Field(description="Max files to return (default: 200)")] = (
+        None
+    )
+
+
+class ExplorerTool(Tool[ExplorerArgs]):
     """Explore the local filesystem."""
+
+    arguments = ExplorerArgs
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(
@@ -32,43 +63,11 @@ class ExplorerTool(Tool):
                 "Use 'map' to get the full tree, 'find' to locate files, 'search' to grep contents, "
                 "'analyze' for a full multi-step analysis report."
             ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["map", "find", "search", "analyze"],
-                        "description": (
-                            "map: directory tree; "
-                            "find: locate files by name/type; "
-                            "search: grep content across files; "
-                            "analyze: full exploration report"
-                        ),
-                    },
-                    "path": {"type": "string", "description": "Directory or file path to explore"},
-                    "pattern": {
-                        "type": "string",
-                        "description": "Glob pattern (find) or regex/substring (search)",
-                    },
-                    "file_types": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": 'Filter by extensions, e.g. [".pdf", ".docx"]',
-                    },
-                    "depth": {"type": "integer", "description": "Max recursion depth (default: 5)"},
-                    "include_hidden": {
-                        "type": "boolean",
-                        "description": "Include hidden files/dirs (default: false)",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Max files to return (default: 200)",
-                    },
-                },
-                "required": ["operation", "path"],
-            },
         )
         self.config = config
+
+    def call(self, args: ExplorerArgs) -> Dict[str, Any]:
+        return self.execute(**forwarded(args))
 
     def execute(
         self,
@@ -79,7 +78,7 @@ class ExplorerTool(Tool):
         depth: int = 5,
         include_hidden: bool = False,
         max_results: int = 200,
-        **kwargs,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
         target = Path(path).expanduser().resolve()
 
@@ -115,7 +114,8 @@ class ExplorerTool(Tool):
     ) -> Dict[str, Any]:
         """Mappa la struttura ad albero di una directory"""
         tree_lines = []
-        stats = {"dirs": 0, "files": 0, "by_format": {}}
+        by_format: Dict[str, int] = {}
+        stats: Dict[str, Any] = {"dirs": 0, "files": 0, "by_format": by_format}
 
         def _walk(path: Path, prefix: str, current_depth: int):
             if current_depth > depth:
@@ -147,7 +147,7 @@ class ExplorerTool(Tool):
                 else:
                     stats["files"] += 1
                     fmt = get_file_format(str(item))
-                    stats["by_format"][fmt] = stats["by_format"].get(fmt, 0) + 1
+                    by_format[fmt] = by_format.get(fmt, 0) + 1
                     size = _fmt_size(item.stat().st_size)
                     tree_lines.append(f"{prefix}{connector}{item.name} ({size})")
 
@@ -171,7 +171,7 @@ class ExplorerTool(Tool):
         max_results: int,
     ) -> Dict[str, Any]:
         """Trova file per nome/pattern/tipo"""
-        matches = []
+        matches: List[Dict[str, Any]] = []
 
         for file in _walk_files(root, depth, include_hidden):
             if len(matches) >= max_results:
@@ -219,7 +219,7 @@ class ExplorerTool(Tool):
             SUPPORTED_FORMATS["text"] + SUPPORTED_FORMATS["code"] + SUPPORTED_FORMATS["csv"]
         )
 
-        results = []
+        results: List[Dict[str, Any]] = []
         pattern_lower = pattern.lower()
 
         for file in _walk_files(root, depth, include_hidden):
