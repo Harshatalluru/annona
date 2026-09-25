@@ -90,6 +90,17 @@ rules:
     prefer: quality
 ```
 
+`on_unavailable` says what happens when every substrate a rule allows is down:
+
+| Value | What happens today |
+|---|---|
+| `hold` | The step does not run. Nothing leaves; the refusal is in the ledger. |
+| `brief` | A local model writes a brief that may cross instead of the material, if `egress.brief` permits it for the class. |
+| `redact` | A local redactor replaces identifiers and the result is reclassified before it may cross, if redaction is configured and permitted for the class. |
+| `queue` | **Behaves like `hold`.** The ledger records `queued`, but nothing resumes the step when a substrate returns — run it again yourself. Automatic resumption is [not built yet](https://github.com/akaion-ai/annona/issues/3). |
+
+Sealed material is never briefed or redacted: it is held whatever the rule says.
+
 `max_class` is the field everything turns on. It is declared per substrate rather
 than derived from `jurisdiction`, so you can be stricter than geography — an EU
 cluster you do not control can be capped at `public` even though it is in the EU.
