@@ -6,6 +6,17 @@ Notable changes to this project. Format based on
 
 ## [Unreleased]
 
+### The vault index is a cache of the notes (#6)
+
+Titles, tags and sync state already reached each note's frontmatter; nothing
+read them back. A vault opened without `.akaion/index.db` listed no notes. The
+index is now refreshed from `notes/*.md` on every open
+(`BrainManager.rebuild_index`), and where file and index disagree the file wins:
+a lost index is rebuilt unchanged, a note retagged in another editor is retagged
+in the runner, and a markdown file dropped into `notes/` becomes a note. A
+hand-typed sync state is validated rather than trusted, so `sync: synced` with
+no cloud id does not stop a note from ever being pushed.
+
 ### Skills Studio can install, from a list the policy wrote
 
 `skill_catalogs` names a catalog and the skills pre-approved from it (ADR 0008).
