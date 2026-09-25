@@ -328,7 +328,14 @@ export const kernel = {
   ask:        (
     prompt: string,
     attachments: string[] = [],
-    opts: { escalate?: boolean; maxIterations?: number; runId?: string; signal?: AbortSignal } = {},
+    opts: {
+      escalate?: boolean
+      maxIterations?: number
+      runId?: string
+      signal?: AbortSignal
+      // Paths attached in earlier turns of this conversation: named, not re-read.
+      earlier?: string[]
+    } = {},
   ) =>
     req<AskResult>("/ask", {
       method: "POST",
@@ -338,6 +345,7 @@ export const kernel = {
       body: JSON.stringify({
         prompt,
         attachments,
+        earlier_attachments: opts.earlier ?? [],
         escalate: Boolean(opts.escalate),
         max_iterations: opts.maxIterations ?? 8,
         run_id: opts.runId ?? "",

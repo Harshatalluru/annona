@@ -55,6 +55,8 @@ __all__ = [
     "attachments_for",
     "describe",
     "display_name",
+    "earlier",
+    "earlier_preamble",
     "headline",
     "inbox_dir",
     "list_stored",
@@ -492,6 +494,61 @@ def preamble(described: Iterable[Mapping[str, Any]]) -> str:
         "Each of these has already been read for you — the extracted content is in the "
         "tool results of this conversation. Answer from it. Call document_reader on a "
         "path again only if you need more of a file than you were given."
+    )
+    return "\n".join(lines)
+
+
+def earlier(paths: Iterable[str]) -> list[dict[str, Any]]:
+    """What a follow-up turn is told about files attached earlier in the conversation.
+
+    Cheap on purpose: a name, a format and a path — no preview, no extraction,
+    no class. These files were read in the turn they were attached to; reading
+    every one of them again on every follow-up would make a long conversation
+    about one contract cost a full extraction per message. The path is what
+    matters, for two reasons: the model can call ``document_reader`` on it, and
+    a path named in the prompt is classified like any other, so a follow-up
+    about a restricted file is placed as one.
+    """
+    described: list[dict[str, Any]] = []
+    for path in paths:
+        target = Path(path).expanduser()
+        exists = target.is_file()
+        described.append(
+            {
+                "name": display_name(target),
+                "path": str(target),
+                "family": family_for(target) if exists else "missing",
+                "format": target.suffix.lstrip(".").lower(),
+                "bytes": target.stat().st_size if exists else 0,
+                "warnings": [] if exists else ["this file no longer exists on this machine"],
+            }
+        )
+    return described
+
+
+def earlier_preamble(described: Iterable[Mapping[str, Any]]) -> str:
+    """The lines that keep earlier attachments addressable in a follow-up turn.
+
+    Without them each ``/ask`` started from nothing: the file attached two
+    messages ago had no path in this turn, so the model could not open it and
+    the only way to ask about it again was to upload it again (#16).
+    """
+    files = list(described)
+    if not files:
+        return ""
+
+    lines = ["[Attached earlier in this conversation]"]
+    for index, item in enumerate(files, 1):
+        lines.append(
+            f"{index}. {item.get('name', '')} — {item.get('family', 'file')}"
+            f"/{item.get('format', '')}\n   path: {item.get('path', '')}"
+        )
+        for warning in item.get("warnings", []):
+            lines.append(f"   note: {warning}")
+
+    lines.append(
+        "These were read in an earlier turn and their content is not in this one. "
+        "If the question needs one of them, call document_reader on its path."
     )
     return "\n".join(lines)
 
